@@ -1,0 +1,5 @@
+user_id: scraper
+passwd: scraper_pw
+db_id: scrape
+host: localhost
+port: 5435

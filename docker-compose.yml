@@ -1,0 +1,41 @@
+services:
+    RETRO:
+        shm_size: 4gb
+        image: hyukkyukang/retro:latest
+        # image: nvcr.io/nvidia/pytorch:25.01-py3
+        container_name: RETRO
+        stdin_open: true
+        tty: true
+        user: $UID:$GID
+        network_mode: "host"
+        environment:
+            - TZ=Asia/Seoul
+        volumes:
+            - /etc/timezone:/etc/timezone:ro 
+            - ./:/root/RETRO/
+            - /mnt/md0/hkkang:/mnt/md0/hkkang
+        working_dir: /root
+        command: >
+            sh -c "echo root | su root -c 'useradd -s /bin/bash -m user -u ${UID} && 
+            echo \"export PATH=$HOME/.local/bin:$PATH\" >> /home/user/.bashrc' &&
+            echo \"export PYTHONPATH=/root/RETRO/\" >> /home/user/.bashrc && 
+            tail -f /dev/null"
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - capabilities: [gpu]
+    RETRO-postgres:
+        image: postgres:17.2
+        container_name: RETRO-postgres
+        stdin_open: true
+        tty: true
+        shm_size: '150gb'
+        ports:
+            - "5435:5432"
+        environment:
+            POSTGRES_USER: "postgres"
+            POSTGRES_PASSWORD: "postgres"
+        volumes:
+            - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+            - ./data/postgresql:/var/lib/postgresql/data
