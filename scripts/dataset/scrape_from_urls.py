@@ -17,6 +17,10 @@ logger = logging.getLogger("Scraper")
 TOTAL_NUM_URLS = 21269932
 
 
+def remove_quotes_and_commas(s: str) -> str:
+    return s.replace("'", "").replace(",", "")
+
+
 def advice_on_process_num(args_process_num: int) -> None:
     n_procs = os.cpu_count()
     if args_process_num > n_procs:
@@ -164,9 +168,9 @@ def scrape_urls(
                 f.write(scraped_text)
 
         # Write to postgres
-        postgres_connector.execute(
-            f"insert into metadata (fid, url, domain, word_count, elapsed, success) values ({fid}, '{url}', '{domain_name}', {metadata['word_count']}, {metadata['elapsed']}, {metadata['success']})",
-        )
+        values_clause = f"({fid}, '{remove_quotes_and_commas(url)}', '{remove_quotes_and_commas(domain_name)}', {metadata['word_count']}, {metadata['elapsed']}, {metadata['success']})"
+        query = f"INSERT INTO metadata (fid, url, domain, word_count, elapsed, success) VALUES {values_clause}"
+        postgres_connector.execute(query)
 
     # Close postgres connection
     postgres_connector.close()
