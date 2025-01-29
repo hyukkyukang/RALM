@@ -90,18 +90,39 @@ def get_output_file_name(url: str, server_idx: int, process_idx: int) -> str:
     return f"{server_idx}_{process_idx}_{hash_url(url)}.txt"
 
 
+def fid_in_db(postgres_connector: pg_utils.PostgresConnector, fid: int) -> bool:
+    fetch_results: List[Dict[str, Any]] = postgres_connector.execute_and_fetchall(
+        f"SELECT fid FROM metadata WHERE fid = {fid}"
+    )
+    return len(fetch_results) > 0
+
+
+def get_db_connector(config_dir_path: str) -> pg_utils.PostgresConnector:
+    # Read in yaml config file
+    with open(os.path.join(config_dir_path, "db.yml"), "r") as f:
+        db_config = yaml.safe_load(f)
+    # Connect to postgres
+    return pg_utils.PostgresConnector(
+        user_id=db_config["user_id"],
+        passwd=db_config["passwd"],
+        host=db_config["host"],
+        port=db_config["port"],
+        db_id=db_config["db_id"],
+    )
+
+
 def scrape_urls(
     process_idx: int,
     url_file_path: str,
     output_dir_path: str,
+    config_dir_path: str,
     start_idx: int,
     end_idx: int,
     server_idx: int,
     timeout: int,
 ) -> None:
-    # Connect to sqlite
-    conn = postgres_conn(db_dir_path=output_dir_path)
-    cur = conn.cursor()
+    # Connect to postgres
+    postgres_connector = get_db_connector(config_dir_path)
 
     # Initialize scraper
     scraper = Scraper(timeout=timeout)
@@ -116,14 +137,8 @@ def scrape_urls(
         # Get the fid
         fid = start_idx + i
 
-        # Get the output file path
-        output_file_name = get_output_file_name(
-            url=url, server_idx=server_idx, process_idx=process_idx
-        )
-        output_file_path = os.path.join(output_dir_path, "data", output_file_name)
-
-        # Skip if the file already exists
-        if os.path.exists(output_file_path):
+        # Skip if fid already exists in the db
+        if fid_in_db(postgres_connector=postgres_connector, fid=fid):
             continue
 
         # Strip the url
@@ -138,26 +153,23 @@ def scrape_urls(
         metadata["domain"] = domain_name
 
         # Write to file
-        with open(output_file_path, "w") as f:
-            f.write(scraped_text)
+        if scraped_text:
+            # Get the output file path
+            output_file_name = get_output_file_name(
+                url=url, server_idx=server_idx, process_idx=process_idx
+            )
+            output_file_path = os.path.join(output_dir_path, "data", output_file_name)
+            # Write to file
+            with open(output_file_path, "w") as f:
+                f.write(scraped_text)
 
-        # Write to sqlite
-        params = (
-            fid,
-            url,
-            domain_name,
-            metadata["word_count"],
-            metadata["elapsed"],
-            metadata["success"],
+        # Write to postgres
+        postgres_connector.execute(
+            f"insert into metadata (fid, url, domain, word_count, elapsed, success) values ({fid}, '{url}', '{domain_name}', {metadata['word_count']}, {metadata['elapsed']}, {metadata['success']})",
         )
-        # cur.execute(
-        #     "insert or ignore into metadata (fid, url, domain, word_count, elapsed, success) values (?, ?, ?, ?, ?, ?)",
-        #     params,
-        # )
 
-    # # Close sqlite connection
-    # conn.commit()
-    # conn.close()
+    # Close postgres connection
+    postgres_connector.close()
 
     return None
 
@@ -165,10 +177,12 @@ def scrape_urls(
 def main(
     url_file_path: str,
     output_dir_path: str,
+    config_dir_path: str,
     server_num: int,
     server_idx: int,
     process_num_per_server: int,
     timeout: int,
+    **kwargs,
 ) -> None:
     # Get the number of processes in this server
     advice_on_process_num(process_num_per_server)
@@ -194,6 +208,7 @@ def main(
             process_idx=process_idx,
             url_file_path=url_file_path,
             output_dir_path=output_dir_path,
+            config_dir_path=config_dir_path,
             start_idx=start_idx,
             end_idx=end_idx,
             server_idx=server_idx,
@@ -206,15 +221,25 @@ def main(
     return None
 
 
+def clear_db(config_dir_path: str) -> None:
+    logger.info("Clearing database...")
+    postgres_connector = get_db_connector(config_dir_path)
+    postgres_connector.execute("DELETE FROM metadata")
+    postgres_connector.close()
+    logger.info("Database cleared.")
+    return None
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url_file_path", type=str, required=True)
     parser.add_argument("--output_dir_path", type=str, required=True)
+    parser.add_argument("--config_dir_path", type=str, required=True)
     parser.add_argument("--server_num", type=int, default=1)
     parser.add_argument("--server_idx", type=int, default=0)
     # parser.add_argument("--process_num_per_server", type=int, default=1)
     parser.add_argument("--process_num_per_server", type=int, default=480)
     parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument("--clear_db", action="store_true")
     return parser.parse_args()
 
 
@@ -225,19 +250,8 @@ if __name__ == "__main__":
         level=logging.INFO,
     )
 
-    # Connect to postgres
-    # Read in yaml config file
-    with open("config/db.yml", "r") as f:
-        db_config = yaml.safe_load(f)
-    postgres_connector = pg_utils.PostgresConnector(
-        user_id=db_config["user_id"],
-        passwd=db_config["passwd"],
-        host=db_config["host"],
-        port=db_config["port"],
-        db_id=db_config["db_id"],
-    )
-    conn = postgres_connector.connect()
-    cur = conn.cursor()
-
-    # args = parse_arguments()
-    # main(**vars(args))
+    args = parse_arguments()
+    if args.clear_db:
+        clear_db(config_dir_path=args.config_dir_path)
+    else:
+        main(**vars(args))

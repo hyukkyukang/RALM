@@ -32,5 +32,9 @@ pip install -r requirements.txt
 python datasets/blacklist_urls.py --url_dir_path {datasets/urls/} --output_file_path {clean_url.txt} --print_blacklist
 ```
 3. Download the content from the clean URLs with [openwebtext's utilities](https://github.com/eukaryote31/openwebtext/blob/master/download.py).
-
+```bash
+python scripts/dataset/scrape_from_urls.py --url_file=/root/RETRO/clean_urls.txt \
+--output_dir=/root/RETRO/data/texts/ \
+--config_dir_path=/root/RETRO/config/
+```
 4. Merge the contents into one loose json file with 1 json per newline of the format {'text': text, 'url': unique_url}. It is important for the url to be unique.
