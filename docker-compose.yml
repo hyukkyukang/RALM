@@ -38,4 +38,4 @@ services:
             POSTGRES_PASSWORD: "postgres"
         volumes:
             - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
-            - ./data/postgresql:/var/lib/postgresql/data
+            - /mnt/md0/hkkang/retro/data/postgresql:/var/lib/postgresql/data
