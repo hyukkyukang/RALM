@@ -3,3 +3,6 @@ passwd: scraper_pw
 db_id: scrape
 host: localhost
 port: 5435
+# Table configs
+url_col_len: 2048
+domain_col_len: 255

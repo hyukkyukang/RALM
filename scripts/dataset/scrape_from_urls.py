@@ -101,18 +101,11 @@ def fid_in_db(postgres_connector: pg_utils.PostgresConnector, fid: int) -> bool:
     return len(fetch_results) > 0
 
 
-def get_db_connector(config_dir_path: str) -> pg_utils.PostgresConnector:
+def get_db_config(config_dir_path: str) -> Dict[str, Any]:
     # Read in yaml config file
     with open(os.path.join(config_dir_path, "db.yml"), "r") as f:
         db_config = yaml.safe_load(f)
-    # Connect to postgres
-    return pg_utils.PostgresConnector(
-        user_id=db_config["user_id"],
-        passwd=db_config["passwd"],
-        host=db_config["host"],
-        port=db_config["port"],
-        db_id=db_config["db_id"],
-    )
+    return db_config
 
 
 def scrape_urls(
@@ -125,8 +118,17 @@ def scrape_urls(
     server_idx: int,
     timeout: int,
 ) -> None:
+    # Read in yaml config file
+    db_config: Dict[str, Any] = get_db_config(config_dir_path)
+
     # Connect to postgres
-    postgres_connector = get_db_connector(config_dir_path)
+    postgres_connector = pg_utils.PostgresConnector(
+        user_id=db_config["user_id"],
+        passwd=db_config["passwd"],
+        host=db_config["host"],
+        port=db_config["port"],
+        db_id=db_config["db_id"],
+    )
 
     # Initialize scraper
     scraper = Scraper(timeout=timeout)
@@ -168,7 +170,7 @@ def scrape_urls(
                 f.write(scraped_text)
 
         # Write to postgres
-        values_clause = f"({fid}, '{remove_quotes_and_commas(url)[:2048]}', '{remove_quotes_and_commas(domain_name)[:255]}', {metadata['word_count']}, {metadata['elapsed']}, {metadata['success']})"
+        values_clause = f"({fid}, '{remove_quotes_and_commas(url)[:db_config['url_col_len']]}', '{remove_quotes_and_commas(domain_name)[:db_config['domain_col_len']]}', {metadata['word_count']}, {metadata['elapsed']}, {metadata['success']})"
         query = f"INSERT INTO metadata (fid, url, domain, word_count, elapsed, success) VALUES {values_clause}"
         postgres_connector.execute(query)
 
@@ -227,12 +229,21 @@ def main(
     # Wait for all processes to finish (this is optional: accessing result will call join method anyway)
     multiprocessor.join()
 
+    logger.info("Scraping finished!")
+
     return None
 
 
 def clear_db(config_dir_path: str) -> None:
     logger.info("Clearing database...")
-    postgres_connector = get_db_connector(config_dir_path)
+    db_config = get_db_config(config_dir_path)
+    postgres_connector = pg_utils.PostgresConnector(
+        user_id=db_config["user_id"],
+        passwd=db_config["passwd"],
+        host=db_config["host"],
+        port=db_config["port"],
+        db_id=db_config["db_id"],
+    )
     postgres_connector.execute("DELETE FROM metadata")
     postgres_connector.close()
     logger.info("Database cleared.")
