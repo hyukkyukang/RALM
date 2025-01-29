@@ -168,7 +168,7 @@ def scrape_urls(
                 f.write(scraped_text)
 
         # Write to postgres
-        values_clause = f"({fid}, '{remove_quotes_and_commas(url)}', '{remove_quotes_and_commas(domain_name)}', {metadata['word_count']}, {metadata['elapsed']}, {metadata['success']})"
+        values_clause = f"({fid}, '{remove_quotes_and_commas(url)[:2048]}', '{remove_quotes_and_commas(domain_name)[:255]}', {metadata['word_count']}, {metadata['elapsed']}, {metadata['success']})"
         query = f"INSERT INTO metadata (fid, url, domain, word_count, elapsed, success) VALUES {values_clause}"
         postgres_connector.execute(query)
 
