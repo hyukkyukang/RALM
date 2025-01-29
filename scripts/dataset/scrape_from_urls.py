@@ -158,7 +158,7 @@ def scrape_urls(
             output_file_name = get_output_file_name(
                 url=url, server_idx=server_idx, process_idx=process_idx
             )
-            output_file_path = os.path.join(output_dir_path, "data", output_file_name)
+            output_file_path = os.path.join(output_dir_path, output_file_name)
             # Write to file
             with open(output_file_path, "w") as f:
                 f.write(scraped_text)
@@ -186,6 +186,11 @@ def main(
 ) -> None:
     # Get the number of processes in this server
     advice_on_process_num(process_num_per_server)
+
+    # Prepare directories
+    # Make output directory if not exists
+    output_dir_path = os.path.join(output_dir_path, "data")
+    os.makedirs(output_dir_path, exist_ok=True)
 
     # Check total number of lines in the urls file
     # check_total_lines_in_urls_file(url_file_path, total_num_urls=TOTAL_NUM_URLS)
@@ -228,6 +233,7 @@ def clear_db(config_dir_path: str) -> None:
     postgres_connector.close()
     logger.info("Database cleared.")
     return None
+
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
