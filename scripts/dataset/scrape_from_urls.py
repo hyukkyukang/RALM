@@ -259,7 +259,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--server_idx", type=int, default=0)
     # parser.add_argument("--process_num_per_server", type=int, default=1)
     parser.add_argument("--process_num_per_server", type=int, default=480)
-    parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--clear_db", action="store_true")
     return parser.parse_args()
 
