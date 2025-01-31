@@ -1,12 +1,24 @@
 import os
+
 import torch
 import torch.distributed as dist
+from datasets import Dataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
-from transformers import GPT2Tokenizer, GPT2LMHeadModel, AdamW, get_scheduler
-from datasets import Dataset
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (AdamW, AutoModelForCausalLM, AutoTokenizer,
+                          get_scheduler)
+
+
+@torch.compile
+def compute_loss_and_backward(model, batch, scaler, gradient_accumulation_steps) -> None:
+    with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+        outputs = model(**batch, labels=batch["input_ids"])
+        loss = outputs.loss
+        loss = loss / gradient_accumulation_steps
+
+    scaler.scale(loss).backward()
+    return None
 
 
 def train_gpt2():
@@ -15,14 +27,15 @@ def train_gpt2():
     use_torch_compile = True
     # Configuration
     # model_name = "gpt2" # GPT-2 Small (~124M parameters)
-    # model_name = "gpt2-medium"  # GPT-2 Medium (~345M parameters)
-    model_name = "gpt2-large"  # GPT-2 Large (~774M parameters)
+    # model_name = "gpt2-medium"  # GPT-2 Medium (~355M parameters)
+    # model_name = "gpt2-large"  # GPT-2 Large (~774M parameters)
+    model_name = "gpt2-xl"  # GPT-2 XL (~1.5B parameters)
     batch_size = 2
     learning_rate = 5e-5
     num_epochs = 1
     max_seq_length = 1024
     gradient_accumulation_steps = 10  # Adjust if GPU memory is limited
-    world_size = 2  # Number of GPUs
+    world_size = 4  # Number of GPUs
 
     # Initialize the process group for DDP
     dist.init_process_group("nccl")
@@ -47,7 +60,10 @@ def train_gpt2():
         model = torch.compile(model)
 
     # Enable mixed-precision training if the flag is set
-    scaler = torch.cuda.amp.GradScaler() if use_mixed_precision else None
+    scaler = torch.amp.GradScaler(enabled=use_mixed_precision)
+
+    # Add gradient clipping value
+    max_grad_norm = 1.0
 
     # Create dummy dataset for debugging
     dummy_texts = [
@@ -118,16 +134,19 @@ def train_gpt2():
             batch = {key: val.to(device) for key, val in batch.items()}
 
             if use_mixed_precision:
-                with torch.cuda.amp.autocast(dtype=torch.float16):
-                    outputs = model(**batch, labels=batch["input_ids"])
-                    loss = outputs.loss
-                    loss = loss / gradient_accumulation_steps
-
-                scaler.scale(loss).backward()
+                if use_torch_compile:
+                    compute_loss_and_backward(model, batch, scaler, gradient_accumulation_steps)
+                else:
+                    with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+                        outputs = model(**batch, labels=batch["input_ids"])
+                        loss = outputs.loss
+                        loss = loss / gradient_accumulation_steps
 
                 if (step + 1) % gradient_accumulation_steps == 0 or step == len(
                     train_dataloader
                 ) - 1:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                     scaler.step(optimizer)
                     scaler.update()
                     optimizer.zero_grad()
@@ -146,12 +165,8 @@ def train_gpt2():
                     optimizer.zero_grad()
                     lr_scheduler.step()
 
-            if local_rank == 0:
-                progress_bar.set_postfix({"Loss": loss.item()})
-
-        # Save the model after each epoch (only on rank 0)
-        if local_rank == 0:
-            model.module.save_pretrained(f"./gpt2_medium_epoch_{epoch + 1}")
+            # if local_rank == 0:
+            #     progress_bar.set_postfix({"Loss": loss.item()})
 
     print("Training completed on rank", local_rank)
 
