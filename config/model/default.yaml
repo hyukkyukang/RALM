@@ -1,0 +1,5 @@
+base_name: huggingface/llama3
+max_length: 1024
+defaults:
+  - _self_
+  - architecture: small

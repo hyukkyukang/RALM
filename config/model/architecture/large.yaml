@@ -1,0 +1,7 @@
+layers: 24
+heads: 20
+query_groups: 4
+intermediate_dim: 5120
+embedding_dim: 1280
+# We follow the GPT-2 architecture to decide the above parameters.
+# https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py?t

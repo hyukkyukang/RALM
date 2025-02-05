@@ -7,6 +7,8 @@ einops
 flash-attn
 setuptools
 datasets
+hydra-core
+lightning
 
 # packages for dataset
 ftfy
