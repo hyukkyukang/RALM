@@ -7,6 +7,7 @@ from datasets import load_dataset, Dataset
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 from transformers import DataCollatorForLanguageModeling
+from tqdm import tqdm
 
 from src.tokenizer import RETROTokenizer
 
@@ -65,9 +66,6 @@ class RETRODataModule(L.LightningDataModule):
                         f"Dataset {self.cfg.dataset.name} does not contain a 'text' column"
                     )
 
-                # Sample the dataset
-                raw_dataset = raw_dataset[self.cfg.dataset.split].select(range(10000))
-
                 # Tokenize the dataset and save as a cache file
                 logger.info("Tokenizing dataset...")
                 processed_dataset = raw_dataset.map(
@@ -75,10 +73,10 @@ class RETRODataModule(L.LightningDataModule):
                     batched=True,
                     remove_columns=["text", "source_id", "source"],
                 )
-                # Print the number of tokens in the dataset
-                logger.info(
-                    f"Number of tokens in the dataset: {sum(len(x) for x in processed_dataset['input_ids'])}"
-                )
+
+                # Select the specific split before accessing input_ids
+                processed_dataset = processed_dataset[self.cfg.dataset.split]
+
                 # Check if the directory exists
                 if not os.path.exists(self.tokenized_dataset_path):
                     logger.info(
@@ -90,6 +88,17 @@ class RETRODataModule(L.LightningDataModule):
                     f"Saving tokenized dataset to {self.tokenized_dataset_path}"
                 )
                 processed_dataset.save_to_disk(self.tokenized_dataset_path)
+
+                # Print the number of tokens in the dataset
+                total_tokens = sum(
+                    len(x)
+                    for x in tqdm(
+                        processed_dataset["input_ids"],
+                        desc="Counting tokens",
+                        total=len(processed_dataset),
+                    )
+                )
+                logger.info(f"Number of tokens in the dataset: {total_tokens}")
             else:
                 logger.info(
                     f"Loading tokenized dataset from {self.tokenized_dataset_path}"
