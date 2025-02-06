@@ -9,6 +9,8 @@ setuptools
 datasets
 hydra-core
 lightning
+tensorboard
+standard-imghdr # Temporary fix the tensorboard error
 
 # packages for dataset
 ftfy

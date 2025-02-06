@@ -1,11 +1,16 @@
 _global:
     seed: 10
     tag: "default"
-    root_dir: "/root/RETRO/runs"
-    eval_dir: "/root/RETRO/eval"
+    root_dir_path: "/root/RETRO/"
+    log_dir: "runs"
     is_debug: False
 defaults:
     - _self_
     - model: default
     - dataset: default
     - training: default
+
+hydra:
+  output_subdir: null
+  run:
+    dir: ./runs/

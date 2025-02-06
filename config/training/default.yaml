@@ -1,21 +1,22 @@
 # Optimization parameters
 precision: 16-mixed
 gradient_clip_val: 1.0
-learning_rate: 5e-5
-weight_decay: 0.01
-warmup_steps: 1000
+max_learning_rate: 4e-4
+min_learning_rate: 4e-5
+weight_decay: 0.1
+warmup_steps: 2000
 gradient_accumulation_steps: 1
-per_device_train_batch_size: 8
-per_device_eval_batch_size: 8
+per_device_train_batch_size: 1
 max_epochs: 1
 
 # Logging and checkpointing
-logging_dir: None
 logging_steps: 100
-val_check_interval_by_step: 100
-resume_ckpt_path: None
+checkpoint_save_steps: 1000
+resume_ckpt_path: Null
 
 # Dataloader
 train_num_workers: 1
 val_num_workers: 1
 test_num_workers: 1
+use_torch_compile: True
+
