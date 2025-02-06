@@ -4,7 +4,6 @@ from typing import *
 import lightning as L
 import torch
 from omegaconf import DictConfig
-from transformers import get_cosine_schedule_with_warmup
 
 from src.model.utils import initialize_weights
 from src.tokenizer import RETROTokenizer
