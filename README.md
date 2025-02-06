@@ -12,7 +12,7 @@ pip install -r requirements.txt
 ```
 
 ## Datasets
-### Download the dataset
+### Download the OpenWebText dataset
 1. Download the deduplicated URLs from [jcpeterson](https://mega.nz/#F!EZZD0YwJ!9_PlEQzdMVLaNdKv_ICNVQ!cc4RgQQZ).
 
 2. Remove the blacklisted URLs.
