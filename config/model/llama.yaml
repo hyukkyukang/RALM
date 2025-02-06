@@ -1,0 +1,6 @@
+name: llama
+base_name: meta-llama/Llama-3.2-1B
+max_length: 1024
+defaults:
+  - _self_
+  - architecture: small

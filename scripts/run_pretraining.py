@@ -76,6 +76,9 @@ def main(cfg: DictConfig) -> None:
             ),
         ],
     )
+    # Prevent logging `hp_metric`
+    if trainer.logger:
+        trainer.logger.log_hyperparams = lambda params, metrics=None: None
 
     # Start training
     logger.info("Starting training...")

@@ -6,7 +6,7 @@ _global:
     is_debug: False
 defaults:
     - _self_
-    - model: default
+    - model: rellama
     - dataset: default
     - training: default
 

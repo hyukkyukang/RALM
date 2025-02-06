@@ -3,11 +3,13 @@ from typing import *
 
 import lightning as L
 import torch
+import transformers
 from omegaconf import DictConfig
 
-from src.model.utils import initialize_weights
+from src.model.rellama.causal_modeling import ReLlamaForCausalLM
+from src.model.rellama.model import ReLlama
+from src.model.utils import get_llama_config, initialize_weights
 from src.tokenizer import RETROTokenizer
-import transformers
 
 logger = logging.getLogger("RETROLightningModule")
 
@@ -28,48 +30,35 @@ class RETROLightningModule(L.LightningModule):
         # Get the tokenizer
         tokenizer = RETROTokenizer.from_pretrained(cfg.model.base_name)
 
-        # Get the config from the pre-trained models
-        llama_config = transformers.LlamaConfig.from_pretrained(cfg.model.base_name)
+        llama_config: transformers.LlamaConfig = get_llama_config(cfg, tokenizer)
 
-        # Modify the configs of the model
-        llama_config.vocab_size = len(tokenizer)
-        llama_config.pad_token_id = tokenizer.pad_token_id
-        llama_config.bos_token_id = tokenizer.bos_token_id
-        llama_config.eos_token_id = tokenizer.eos_token_id
-        llama_config.num_attention_heads = cfg.model.architecture.num_attention_heads
-        llama_config.num_key_value_heads = cfg.model.architecture.num_key_value_heads
-        llama_config.hidden_size = cfg.model.architecture.hidden_size
-        assert (
-            llama_config.hidden_size % llama_config.num_attention_heads == 0
-        ), "hidden_size must be divisible by num_attention_heads"
-        llama_config.head_dim = (
-            llama_config.hidden_size // llama_config.num_attention_heads
-        )
-        llama_config.intermediate_size = cfg.model.architecture.intermediate_size
-        llama_config.num_hidden_layers = cfg.model.architecture.layers
-        llama_config.max_position_embeddings = cfg.model.max_length
-        llama_config.torch_dtype = torch.float32
-        llama_config.rope_scaling = None
         # Initialize the model
-        model = transformers.LlamaForCausalLM(config=llama_config)
+        if cfg.model.name == "llama":
+            model = transformers.LlamaModel(config=llama_config)
+            causal_model = transformers.LlamaForCausalLM(config=llama_config)
+        elif cfg.model.name == "rellama":
+            model = ReLlama(llama_config)
+            causal_model = ReLlamaForCausalLM(config=llama_config, model=model)
+        else:
+            raise ValueError(f"Model name {cfg.model.name} not supported")
 
         # Initialize model weights if not resuming from checkpoint
         if cfg.training.resume_ckpt_path is None:
             logger.info(
                 "Applying xavier uniform initialization to model weights for pretraining from scratch"
             )
-            model.apply(initialize_weights)
+            causal_model.apply(initialize_weights)
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
         if cfg.training.use_torch_compile:
             if torch.cuda.get_device_capability()[0] >= 7:
-                model = torch.compile(model, dynamic=True)
+                causal_model = torch.compile(causal_model, dynamic=True)
             else:
                 logger.info(
                     "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile."
                 )
 
-        return model
+        return causal_model
 
     def forward(
         self,
