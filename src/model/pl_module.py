@@ -107,14 +107,13 @@ class ReLLamaLightningModule(L.LightningModule):
             self.parameters(),
             lr=self.cfg.training.max_learning_rate,
             weight_decay=self.cfg.training.weight_decay,
+            betas=(self.cfg.training.beta1, self.cfg.training.beta2),
         )
 
         # Create a chain of schedulers: linear warmup followed by cosine decay to min_lr
-        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer,
-            start_factor=0.001,  # Changed from 0.0 to small positive value
-            end_factor=1.0,  # End at max_lr
-            total_iters=self.cfg.training.warmup_steps,
+            lr_lambda=lambda epoch: epoch / self.cfg.training.warmup_steps,
         )
 
         cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
