@@ -1,28 +1,28 @@
-import os
 import logging
+import os
 from typing import *
 
 import lightning as L
-from datasets import load_dataset, Dataset
+from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
-from transformers import DataCollatorForLanguageModeling
 from tqdm import tqdm
+from transformers import DataCollatorForLanguageModeling
 
-from src.tokenizer import RETROTokenizer
+from src.tokenizer import ReLlamaTokenizer
+from src.utils import log_if_rank_zero
 
-logger = logging.getLogger("RETRODataModule")
+logger = logging.getLogger("ReLLamaDataModule")
 
 
-class RETRODataModule(L.LightningDataModule):
+class ReLLamaDataModule(L.LightningDataModule):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
-        self.dataset_length = 0
         self.train_dataset: Dataset | None = None
         self.max_length: int = cfg.model.max_length
         self.batch_size: int = cfg.training.per_device_train_batch_size
-        self.tokenizer: RETROTokenizer = RETROTokenizer.from_pretrained(
+        self.tokenizer: ReLlamaTokenizer = ReLlamaTokenizer.from_pretrained(
             cfg.model.base_name
         )
 
@@ -50,8 +50,9 @@ class RETRODataModule(L.LightningDataModule):
         try:
             if not os.path.exists(self.tokenized_dataset_path):
                 # Download the dataset from the hub
-                logger.info(
-                    f"Downloading {self.cfg.dataset.name} data ({self.cfg.dataset.split} split) into {self.hf_cache_dir_path}"
+                log_if_rank_zero(
+                    logger,
+                    f"Downloading {self.cfg.dataset.name} data ({self.cfg.dataset.split} split) into {self.hf_cache_dir_path}",
                 )
                 raw_dataset = load_dataset(
                     self.cfg.dataset.name,
@@ -67,7 +68,7 @@ class RETRODataModule(L.LightningDataModule):
                     )
 
                 # Tokenize the dataset and save as a cache file
-                logger.info("Tokenizing dataset...")
+                log_if_rank_zero(logger, "Tokenizing dataset...")
                 processed_dataset = raw_dataset.map(
                     self.tokenize_function,
                     batched=True,
@@ -79,13 +80,14 @@ class RETRODataModule(L.LightningDataModule):
 
                 # Check if the directory exists
                 if not os.path.exists(self.tokenized_dataset_path):
-                    logger.info(
-                        f"Directory {self.tokenized_dataset_path} does not exist. Creating it."
+                    log_if_rank_zero(
+                        logger,
+                        f"Directory {self.tokenized_dataset_path} does not exist. Creating it.",
                     )
                     os.makedirs(self.tokenized_dataset_path)
                 # Save the tokenized dataset
-                logger.info(
-                    f"Saving tokenized dataset to {self.tokenized_dataset_path}"
+                log_if_rank_zero(
+                    logger, f"Saving tokenized dataset to {self.tokenized_dataset_path}"
                 )
                 processed_dataset.save_to_disk(self.tokenized_dataset_path)
 
@@ -98,15 +100,9 @@ class RETRODataModule(L.LightningDataModule):
                         total=len(processed_dataset),
                     )
                 )
-                logger.info(f"Number of tokens in the dataset: {total_tokens}")
-            else:
-                logger.info(
-                    f"Loading tokenized dataset from {self.tokenized_dataset_path}"
+                log_if_rank_zero(
+                    logger, f"Number of tokens in the dataset: {total_tokens}"
                 )
-                processed_dataset = Dataset.load_from_disk(self.tokenized_dataset_path)
-
-            self.dataset_length = processed_dataset.num_rows
-            logger.info(f"Dataset length: {self.dataset_length}")
 
         except Exception as e:
             logger.error(f"Error preparing dataset: {str(e)}")
@@ -127,13 +123,10 @@ class RETRODataModule(L.LightningDataModule):
 
             # Load the cached tokenized dataset instead of the raw dataset
             self.train_dataset = Dataset.load_from_disk(self.tokenized_dataset_path)
-            logger.info(
-                f"Loaded cached tokenized dataset with {len(self.train_dataset)} examples"
+            log_if_rank_zero(
+                logger,
+                f"Loaded cached tokenized dataset with {len(self.train_dataset)} examples",
             )
-
-            assert (
-                len(self.train_dataset) == self.dataset_length
-            ), f"Dataset length mismatch: {len(self.train_dataset)} != {self.dataset_length}"
 
         except Exception as e:
             logger.error(f"Error setting up dataset: {str(e)}")
@@ -159,6 +152,7 @@ class RETRODataModule(L.LightningDataModule):
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
+            num_workers=self.cfg.training.train_num_workers,
             collate_fn=data_collator,
             shuffle=True,
         )

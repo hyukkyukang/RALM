@@ -1,1 +1,1 @@
-from .pl_module import RETROLightningModule
+from .pl_module import ReLLamaLightningModule

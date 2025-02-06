@@ -1,1 +1,1 @@
-from .retro_tokenizer import RETROTokenizer
+from .rellama_tokenizer import ReLlamaTokenizer
