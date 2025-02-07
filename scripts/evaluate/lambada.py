@@ -1,17 +1,19 @@
 import logging
 from typing import *
-
+import copy
 import hkkang_utils.misc as misc_utils
 import hydra
 import torch
 import tqdm
 from datasets import load_dataset
 from omegaconf import DictConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BasicTokenizer
 
+from scripts.evaluate.utils import normalize_quotes
 from src.model import ReLLamaLightningModule
 from src.tokenizer import ReLlamaTokenizer
 from src.utils import check_argument
+from scripts.evaluate.utils import STOPWORDS_FROM_GPT2
 
 logger = logging.getLogger("EvaluateLambada")
 
@@ -47,13 +49,72 @@ def find_the_last_non_pad_idx(
     return last_non_pad_indices
 
 
+def split_text_into_context_and_last_word(
+    line: str, tokenizer: BasicTokenizer
+) -> Dict[str, str]:
+    line = line.strip()
+    toks = tokenizer.tokenize(line)
+    length_of_word = len(toks[-1])
+    assert length_of_word > 0, f"The last word is empty: {toks[-1]}"
+    return {"context": line[:-length_of_word].strip(), "last_word": toks[-1]}
+
+
+def predict(
+    token_ids: List[List[int]],
+    tokenizer: AutoTokenizer,
+    model: AutoModelForCausalLM,
+    steps_to_predict: int = 6,
+    beam_width: int = 128,
+) -> List[str]:
+    """Give continuation of the line with at most max_predictions BPE tokens. Returns line extended with predictions of
+    the model."""
+    bsize = len(token_ids)
+    # Convert the token ids to a tensor
+    current_input_token_ids = torch.tensor(token_ids).to(model.device)
+    # Get the predictions
+    all_token_ids: List[List[int]] = copy.deepcopy(token_ids)
+    states = None
+    for _ in range(steps_to_predict):
+        outputs = model(current_input_token_ids, past_key_values=states)
+        logits = outputs.logits  # Get logits from the outputs
+        states = outputs.past_key_values  # Get the state from outputs
+
+        # Get the top k candidates
+        _, line_encoded_candidates = torch.topk(
+            logits[:, -1, :],
+            k=beam_width,
+            dim=-1,
+        )
+        line_encoded_candidates = line_encoded_candidates.tolist()
+        current_input_token_ids: List[List[int]] = []
+        for b_idx in range(bsize):
+            # Convert all the candidates to tokens
+            candidate_tokens = tokenizer.convert_ids_to_tokens(
+                line_encoded_candidates[b_idx]
+            )
+            # Find the first candidate which is not a stopword
+            predicted_token_id = None
+            for cand_idx, candidate_token in enumerate(candidate_tokens):
+                if candidate_token.lower() not in STOPWORDS_FROM_GPT2:
+                    predicted_token_id = line_encoded_candidates[b_idx][cand_idx]
+                    break
+            assert predicted_token_id is not None, "No valid candidate found"
+            all_token_ids[b_idx].append(predicted_token_id)
+            current_input_token_ids.append([predicted_token_id])
+
+        # Update the input tensor to pass to the next step
+        current_input_token_ids = torch.tensor(current_input_token_ids).to(model.device)
+
+    # Convert the decoded sequences to a list of strings
+    decoded_sequences = [tokenizer.decode(ids) for ids in all_token_ids]
+    return decoded_sequences
+
+
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
+    batch_size = 1
     # Check the arguments
     cfg = check_arguments(cfg)
-
-    # Load the dataset
-    dataset = load_dataset(cfg.eval.dataset_name)["test"]
 
     # Load the pre-trained model and tokenizer
     device = "cuda"
@@ -68,63 +129,56 @@ def main(cfg: DictConfig) -> None:
         tokenizer.pad_token = tokenizer.eos_token
     model.eval()
 
+    # Load the dataset
+    dataset = load_dataset(cfg.eval.dataset_name)["test"]
+
+    # Split the last word from the text
+    basic_tokenizer = BasicTokenizer()
+    dataset = dataset.map(
+        lambda x: split_text_into_context_and_last_word(x["text"], basic_tokenizer),
+        batched=False,
+    )
+
     # Tokenize the dataset
     tokenized_dataset = dataset.map(
-        lambda x: tokenizer(x["text"], return_tensors="pt", padding=True),
-        batched=True,
-        batch_size=cfg.eval.batch_size,
+        lambda x: tokenizer(x["context"], return_tensors="pt", padding=True),
+        batched=False,
+        batch_size=batch_size,
         remove_columns=["domain", "text"],
     )
 
-    # Evaluate the model
-    all_accuracies: List[float] = []
+    # Evaluate the model with the last word prediction
+    all_accuracies: List[int] = []
     with torch.no_grad():
-        for start_idx in tqdm.tqdm(
-            range(0, len(tokenized_dataset), cfg.eval.batch_size),
-            desc="Evaluating",
-            total=len(tokenized_dataset) // cfg.eval.batch_size,
-        ):
-            end_idx = min(start_idx + cfg.eval.batch_size, len(tokenized_dataset))
-            input_ids: torch.Tensor = torch.tensor(
-                tokenized_dataset["input_ids"][start_idx:end_idx]
-            ).to(model.device)
-            attention_masks: torch.Tensor = torch.tensor(
-                tokenized_dataset["attention_mask"][start_idx:end_idx]
-            ).to(model.device)
-
-            # Get the predictions
-            predictions = model(
-                input_ids=input_ids, attention_mask=attention_masks, return_dict=True
+        for idx in tqdm.tqdm(range(len(tokenized_dataset)), desc="Evaluating"):
+            # Get the predicted completions
+            predictions: str = predict(
+                token_ids=tokenized_dataset["input_ids"][idx],
+                tokenizer=tokenizer,
+                model=model,
+            )[0]
+            input_contexts: List[str] = tokenizer.decode(
+                tokenized_dataset["input_ids"][idx][0]
             )
-
-            # Get the find the last non-padding token id for each sample
-            last_non_pad_indices = find_the_last_non_pad_idx(
-                input_ids, attention_masks, tokenizer.pad_token_id
+            generated_texts: str = predictions[len(input_contexts) :].strip()
+            predicted_words: List[str] = basic_tokenizer.tokenize(generated_texts)
+            predicted_word: str = (
+                "" if len(predicted_words) == 0 else predicted_words[0]
             )
-            # Get the predictions for the last non-padding token
-            batch_indices = torch.arange(len(last_non_pad_indices), device=model.device)
-            predictions = predictions["logits"][batch_indices, last_non_pad_indices]
-            # Get the labels for the last non pad tokens using tensor indexing
-            labels = input_ids[batch_indices, last_non_pad_indices]
-            # Evaluate the results
-            predicted_tokens = predictions.argmax(dim=-1)
-            accuracy = (predicted_tokens == labels).float()
+            # Check if the predicted word is the same as the last word
+            if predicted_word == tokenized_dataset["last_word"][idx]:
+                accuracy = 1
+            else:
+                accuracy = 0
+            all_accuracies.append(accuracy)
 
-            # Save the accuracy
-            all_accuracies.extend(accuracy.tolist())
             debug = False
             if debug:
-                for i in range(len(last_non_pad_indices)):
-                    label_token = tokenizer.convert_ids_to_tokens(labels[i : i + 1])
-                    predicted_token = tokenizer.convert_ids_to_tokens(
-                        predicted_tokens[i : i + 1]
-                    )
-                    # Print only up to the last non-padding token
-                    logger.info(
-                        f"Last Few Words: {tokenizer.decode(tokenized_dataset['input_ids'][start_idx + i][:last_non_pad_indices[i] + 1])}"
-                    )
-                    logger.info(f"Label: {label_token}")
-                    logger.info(f"Predicted: {predicted_token}")
+                print(f"Input: {input_contexts}")
+                print(f"Predicted: {predicted_word}")
+                print(f"Last word: {tokenized_dataset['last_word'][idx]}")
+                print(f"Accuracy: {accuracy}")
+                print("-" * 100)
     logger.info(
         f"Accuracy: {sum(all_accuracies) / len(all_accuracies)} ({len(all_accuracies)} samples)"
     )

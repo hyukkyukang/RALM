@@ -54,6 +54,15 @@ def main(cfg: DictConfig) -> None:
         cfg=cfg, total_steps=total_steps, tokenizer=data_module.tokenizer
     )
 
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=default_root_dir,
+        monitor="loss",
+        mode="min",
+        save_top_k=1,
+        every_n_train_steps=cfg.training.checkpoint_save_steps,
+        save_last=True,
+    )
+
     # Trainer initialization with training args
     trainer = L.Trainer(
         deterministic=True,
@@ -71,15 +80,8 @@ def main(cfg: DictConfig) -> None:
         ),
         callbacks=[
             LearningRateMonitor(logging_interval="step"),
-            # ModelSummary(max_depth=-1), # Turn this on if you want to see the model architecture (i.e., the parameter names)
-            ModelCheckpoint(
-                dirpath=default_root_dir,
-                monitor="loss",
-                mode="min",
-                save_top_k=1,
-                every_n_train_steps=cfg.training.checkpoint_save_steps,
-                save_last=True,
-            ),
+            # ModelSummary(max_depth=-1), # Turn this on if you want to see the model architecture (i.e., the parameter names),
+            checkpoint_callback,
         ],
     )
     # Prevent logging `hp_metric`
@@ -95,6 +97,22 @@ def main(cfg: DictConfig) -> None:
     trainer.fit(model, datamodule=data_module, ckpt_path=cfg.training.resume_ckpt_path)
 
     log_if_rank_zero(logger, "Training completed successfully!")
+
+    # Rename the modules in the checkpoint when using torch compile
+    if cfg.training.use_torch_compile and torch.cuda.get_device_capability()[0] >= 7:
+        log_if_rank_zero(
+            logger, "Renaming the modules in the checkpoint for torch compile..."
+        )
+        # Load the checkpoint
+        checkpoint = torch.load(checkpoint_callback.best_model_path)
+        # Repair the checkpoint
+        checkpoint["state_dict"] = {
+            k.replace("._orig_mod.", "."): v
+            for k, v in checkpoint["state_dict"].items()
+        }
+        # Save the repaired checkpoint
+        torch.save(checkpoint, checkpoint_callback.best_model_path)
+        log_if_rank_zero(logger, "Checkpoint saved successfully!")
 
     return None
 
