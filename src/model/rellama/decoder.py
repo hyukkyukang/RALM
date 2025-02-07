@@ -1,17 +1,15 @@
 from typing import *
 
 import torch
-import xformers.ops.swiglu_op as xsw
 from omegaconf import DictConfig
 from transformers.models.llama.modeling_llama import (
     Cache,
     FlashAttentionKwargs,
-    # LlamaMLP,
-    # LlamaRMSNorm,
+    LlamaMLP,
+    LlamaRMSNorm,
 )
 
 from src.model.rellama.attention import ReLlamaAttention
-from flash_attn.ops.triton.layer_norm import RMSNorm
 
 
 class ReLlamaDecoderLayer(torch.nn.Module):
@@ -21,15 +19,9 @@ class ReLlamaDecoderLayer(torch.nn.Module):
 
         self.self_attn = ReLlamaAttention(config=config, layer_idx=layer_idx)
 
-        # self.mlp = LlamaMLP(config)
-        self.mlp = xsw.SwiGLU(
-            config.hidden_size,
-            config.intermediate_size,
-            config.hidden_size,
-            bias=config.mlp_bias,
-        )
-        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(
+        self.mlp = LlamaMLP(config)
+        self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = LlamaRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 

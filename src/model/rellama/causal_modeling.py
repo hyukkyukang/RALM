@@ -10,7 +10,6 @@ from transformers.models.llama.modeling_llama import (
 )
 from src.model.rellama.model import ReLlama
 from transformers.cache_utils import Cache
-from src.model.rellama.fused_cross_entropy import ForCausalLMLoss
 
 
 class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
@@ -127,7 +126,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
 
         loss = None
         if labels is not None:
-            loss = ForCausalLMLoss(
+            loss = self.loss_function(
                 logits=logits,
                 labels=labels,
                 vocab_size=self.config.vocab_size,
