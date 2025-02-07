@@ -38,6 +38,7 @@ class ReLLamaLightningModule(L.LightningModule):
             tokenizer = ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
 
         llama_config: transformers.LlamaConfig = get_llama_config(cfg, tokenizer)
+        llama_config.attn_implementation = "flash_attention_2"
 
         # Initialize the model
         if cfg.model.name == "llama":

@@ -16,6 +16,7 @@ from transformers.models.llama.modeling_llama import (
 from src.model.rellama.decoder import ReLlamaDecoderLayer
 from src.model.utils import initialize_weights
 from transformers.modeling_utils import PreTrainedModel
+from flash_attn.ops.triton.layer_norm import RMSNorm
 
 logger = logging.getLogger("ReLlama")
 
@@ -61,7 +62,8 @@ class ReLlama(ReLlamaPreTrainedModel):
                 for layer_idx in range(config.num_hidden_layers)
             ]
         )
-        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        # self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = LlamaRotaryEmbedding(config=config)
         self.gradient_checkpointing = False
         initialize_weights(self)
