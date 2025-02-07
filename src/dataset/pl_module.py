@@ -20,6 +20,7 @@ class ReLLamaDataModule(L.LightningDataModule):
         super().__init__()
         self.cfg = cfg
         self.train_dataset: Dataset | None = None
+        self.dataset_size: int = 0
         self.max_length: int = cfg.model.max_length
         self.batch_size: int = cfg.training.per_device_train_batch_size
         self.tokenizer: ReLlamaTokenizer = ReLlamaTokenizer.from_pretrained(
@@ -28,7 +29,9 @@ class ReLLamaDataModule(L.LightningDataModule):
 
     def __len__(self):
         if self.train_dataset is None:
-            return 0
+            assert self.dataset_size > 0, "Dataset size not set"
+            return self.dataset_size
+        assert len(self.train_dataset) == self.dataset_size, "Dataset size mismatch"
         return len(self.train_dataset)
 
     @property
@@ -103,7 +106,11 @@ class ReLLamaDataModule(L.LightningDataModule):
                 log_if_rank_zero(
                     logger, f"Number of tokens in the dataset: {total_tokens}"
                 )
-
+                self.dataset_size = len(processed_dataset)
+            else:
+                # Load the cached dataset
+                train_dataset = Dataset.load_from_disk(self.tokenized_dataset_path)
+                self.dataset_size = len(train_dataset)
         except Exception as e:
             logger.error(f"Error preparing dataset: {str(e)}")
             raise
