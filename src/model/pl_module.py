@@ -1,4 +1,5 @@
 import logging
+import math
 from typing import *
 
 import lightning as L
@@ -101,9 +102,7 @@ class ReLLamaLightningModule(L.LightningModule):
         )
         return loss
 
-    def configure_optimizers(
-        self,
-    ) -> Tuple[List[torch.optim.Optimizer], List[torch.optim.lr_scheduler.LRScheduler]]:
+    def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.cfg.training.max_learning_rate,
@@ -111,22 +110,24 @@ class ReLLamaLightningModule(L.LightningModule):
             betas=(self.cfg.training.beta1, self.cfg.training.beta2),
         )
 
-        # Create a chain of schedulers: linear warmup followed by cosine decay to min_lr
-        warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer,
-            lr_lambda=lambda epoch: epoch / self.cfg.training.warmup_steps,
-        )
+        # Define warmup and total training steps
+        warmup_iters = self.cfg.training.warmup_steps
+        total_iters = self.total_training_steps
+        min_lr = self.cfg.training.min_learning_rate
+        max_lr = self.cfg.training.max_learning_rate
 
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=self.total_training_steps - self.cfg.training.warmup_steps,
-            eta_min=self.cfg.training.min_learning_rate,  # Set your minimum learning rate here
-        )
+        # Define cosine learning rate function with warmup
+        def lr_lambda(it):
+            if it < warmup_iters:
+                return it / warmup_iters  # Linear warmup
+            elif it > total_iters:
+                return min_lr / max_lr  # Hold at min LR
+            else:
+                decay_ratio = (it - warmup_iters) / (total_iters - warmup_iters)
+                coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Cosine decay
+                return (min_lr / max_lr) + coeff * (1 - (min_lr / max_lr))
 
-        scheduler = torch.optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, cosine_scheduler],
-            milestones=[self.cfg.training.warmup_steps],
-        )
+        # Use LambdaLR to apply our custom schedule
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
