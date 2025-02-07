@@ -162,9 +162,10 @@ def lr_lambda(
     """
     if it < warmup_iters:
         return float(it) / float(warmup_iters)  # Linear warmup
-    elif it > total_iters:
+    elif it >= total_iters:  # Fix the condition
         return min_lr / max_lr  # Hold at min LR
     else:
         decay_ratio = float(it - warmup_iters) / float(total_iters - warmup_iters)
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Cosine decay
-        return (min_lr / max_lr) + coeff * (1 - (min_lr / max_lr))
+        # return coeff * (max_lr - min_lr) / max_lr + min_lr / max_lr  # Adjusted formula
+        return (min_lr + coeff * (max_lr - min_lr)) / max_lr
