@@ -1,8 +1,10 @@
 import logging
 from typing import *
 
-from transformers import PreTrainedTokenizerFast, AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
 from src.tokenizer.utils import call_autotokenizer_with_hf_token
+from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLlamaTokenizer")
 
@@ -34,8 +36,9 @@ class ReLlamaTokenizer(PreTrainedTokenizerFast):
         # We reuse the last token as padding token to avoid increasing the vocabulary size.
         if tokenizer.pad_token is None:
             last_token: str = tokenizer.convert_ids_to_tokens(len(tokenizer) - 1)
-            logger.info(
-                f"Setting the last token in the vocab ('{last_token}') as padding token"
+            log_if_rank_zero(
+                logger,
+                f"Setting the last token in the vocab ('{last_token}') as padding token",
             )
             tokenizer.pad_token = last_token
 
@@ -44,14 +47,16 @@ class ReLlamaTokenizer(PreTrainedTokenizerFast):
         if len(tokenizer) % 64 != 0:
             num_dummy_tokens: int = 64 - len(tokenizer) % 64
             new_total_token_num: int = len(tokenizer) + num_dummy_tokens
-            logger.info(
-                f"Adding {num_dummy_tokens} dummy tokens to make the number of tokens in the vocab to be a multiple of 64. (current: {len(tokenizer)}, new: {new_total_token_num})"
+            log_if_rank_zero(
+                logger,
+                f"Adding {num_dummy_tokens} dummy tokens to make the number of tokens in the vocab to be a multiple of 64. (current: {len(tokenizer)}, new: {new_total_token_num})",
             )
             dummy_tokens = [f"<dummy_token_{i+1}>" for i in range(num_dummy_tokens)]
             tokenizer.add_special_tokens({"additional_special_tokens": dummy_tokens})
         else:
-            logger.info(
-                f"The number of tokens in the vocab is already a multiple of 64. (current: {len(tokenizer)})"
+            log_if_rank_zero(
+                logger,
+                f"The number of tokens in the vocab is already a multiple of 64. (current: {len(tokenizer)})",
             )
 
         return tokenizer

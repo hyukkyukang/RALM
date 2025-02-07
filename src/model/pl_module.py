@@ -9,26 +9,33 @@ from omegaconf import DictConfig
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
 from src.model.utils import get_llama_config, initialize_weights
-from src.tokenizer import RETROTokenizer
+from src.tokenizer import ReLlamaTokenizer
+from src.utils import log_if_rank_zero
 
-logger = logging.getLogger("RETROLightningModule")
+logger = logging.getLogger("ReLLamaLightningModule")
 
 
-class RETROLightningModule(L.LightningModule):
-    def __init__(self, cfg: DictConfig, total_steps: int) -> None:
+class ReLLamaLightningModule(L.LightningModule):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        total_steps: int,
+        tokenizer: Optional[ReLlamaTokenizer] = None,
+    ) -> None:
         super().__init__()
         self.cfg = cfg
         self.total_training_steps = total_steps
         self.model: transformers.LlamaForCausalLM = self.initialize_language_model(
-            cfg=cfg
+            cfg=cfg, tokenizer=tokenizer
         )
         self.save_hyperparameters(cfg)
 
     def initialize_language_model(
-        self, cfg: DictConfig
+        self, cfg: DictConfig, tokenizer: Optional[ReLlamaTokenizer] = None
     ) -> transformers.LlamaForCausalLM:
         # Get the tokenizer
-        tokenizer = RETROTokenizer.from_pretrained(cfg.model.base_name)
+        if tokenizer is None:
+            tokenizer = ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
 
         llama_config: transformers.LlamaConfig = get_llama_config(cfg, tokenizer)
 
@@ -44,8 +51,9 @@ class RETROLightningModule(L.LightningModule):
 
         # Initialize model weights if not resuming from checkpoint
         if cfg.training.resume_ckpt_path is None:
-            logger.info(
-                "Applying xavier uniform initialization to model weights for pretraining from scratch"
+            log_if_rank_zero(
+                logger,
+                "Applying xavier uniform initialization to model weights for pretraining from scratch",
             )
             causal_model.apply(initialize_weights)
 
@@ -54,8 +62,9 @@ class RETROLightningModule(L.LightningModule):
             if torch.cuda.get_device_capability()[0] >= 7:
                 causal_model = torch.compile(causal_model, dynamic=True)
             else:
-                logger.info(
-                    "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile."
+                log_if_rank_zero(
+                    logger,
+                    "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile.",
                 )
 
         return causal_model
@@ -91,31 +100,6 @@ class RETROLightningModule(L.LightningModule):
         )
         return loss
 
-    # def validation_step(
-    #     self,
-    #     batch: Dict[str, torch.Tensor],
-    #     batch_idx: int
-    # ) -> None:
-    #     outputs = self(
-    #         input_ids=batch["input_ids"],
-    #         attention_mask=batch["attention_mask"],
-    #         labels=batch["labels"],
-    #     )
-    #     loss = outputs.loss
-    #     perplexity = torch.exp(loss)
-    #     # Perform logging
-    #     self.log_dict(
-    #         {
-    #             "val_loss": loss,
-    #             "val_perplexity": perplexity
-    #         },
-    #         batch_size=batch["input_ids"].size(0),
-    #         on_step=False,
-    #         on_epoch=True,
-    #         sync_dist=True,
-    #     )
-    #     return None
-
     def configure_optimizers(
         self,
     ) -> Tuple[List[torch.optim.Optimizer], List[torch.optim.lr_scheduler.LRScheduler]]:
@@ -123,14 +107,13 @@ class RETROLightningModule(L.LightningModule):
             self.parameters(),
             lr=self.cfg.training.max_learning_rate,
             weight_decay=self.cfg.training.weight_decay,
+            betas=(self.cfg.training.beta1, self.cfg.training.beta2),
         )
 
         # Create a chain of schedulers: linear warmup followed by cosine decay to min_lr
-        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer,
-            start_factor=0.001,  # Changed from 0.0 to small positive value
-            end_factor=1.0,  # End at max_lr
-            total_iters=self.cfg.training.warmup_steps,
+            lr_lambda=lambda epoch: epoch / self.cfg.training.warmup_steps,
         )
 
         cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(

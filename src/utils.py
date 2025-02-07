@@ -1,17 +1,27 @@
+import logging
 from typing import *
 
+import torch.distributed as dist
 from omegaconf import DictConfig, open_dict
+from pytorch_lightning.utilities import rank_zero_only
+
+
+@rank_zero_only
+def log_if_rank_zero(logger: logging.Logger, message: str, level: str = "info") -> None:
+    """Helper function to log only on rank 0 process."""
+    getattr(logger, level)(message)
+
 
 def overwrite_config(src: DictConfig, dst: DictConfig) -> DictConfig:
     """Recursively overwrite values in the source config with values from the destination config.
-    
+
     Args:
         src (DictConfig): Source configuration to be modified
         dst (DictConfig): Destination configuration containing new values
-        
+
     Returns:
         DictConfig: Modified source configuration with overwritten values
-        
+
     Note:
         Only overwrites keys that already exist in the source config.
         For nested DictConfigs, recursively updates the nested values.
@@ -28,12 +38,12 @@ def overwrite_config(src: DictConfig, dst: DictConfig) -> DictConfig:
 
 def add_config(cfg: DictConfig, key: str, value: Any) -> DictConfig:
     """Add a new key-value pair to a DictConfig.
-    
+
     Args:
         cfg (DictConfig): Configuration to modify
         key (str): Key to add
         value (Any): Value to associate with the key
-        
+
     Returns:
         DictConfig: Modified configuration with the new key-value pair
     """
@@ -46,16 +56,16 @@ def add_global_configs(
     cfg: DictConfig, global_dic: DictConfig = None, exclude_keys: List[str] = None
 ) -> DictConfig:
     """Recursively add global configuration values to all nested configurations.
-    
+
     Args:
         cfg (DictConfig): Configuration to modify
         global_dic (DictConfig, optional): Global configuration values to add.
             If None, uses cfg._global
         exclude_keys (List[str], optional): Keys to exclude from global config application
-        
+
     Returns:
         DictConfig: Modified configuration with global values added to all nested configs
-        
+
     Raises:
         AssertionError: If global_dic is None and cfg has no _global attribute
     """
@@ -79,10 +89,10 @@ def add_global_configs(
 
 def remove_key_with_none_value(dic: Dict) -> Dict:
     """Remove all key-value pairs where the value is None.
-    
+
     Args:
         dic (Dict): Dictionary to filter
-        
+
     Returns:
         Dict: New dictionary with None values removed
     """
