@@ -26,6 +26,7 @@ class ReLLamaLightningModule(L.LightningModule):
         super().__init__()
         self.cfg = cfg
         self.total_training_steps = total_steps
+        self.bpb_term = math.log2(math.e) / 4  # 4 is bytes_per_token
         self.model: transformers.LlamaForCausalLM = self.initialize_language_model(
             cfg=cfg, tokenizer=tokenizer
         )
@@ -69,6 +70,10 @@ class ReLLamaLightningModule(L.LightningModule):
                     "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile.",
                 )
 
+        # Enable gradient checkpointing if specified in config
+        if cfg.training.get("gradient_checkpointing", False):
+            causal_model.gradient_checkpointing_enable()
+
         return causal_model
 
     def forward(
@@ -77,10 +82,15 @@ class ReLLamaLightningModule(L.LightningModule):
         attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
     ) -> Any:
-        outputs = self.model(
+        # Use inference_mode when not training
+        if not self.training:
+            with torch.inference_mode():
+                return self.model(
+                    input_ids=input_ids, attention_mask=attention_mask, labels=labels
+                )
+        return self.model(
             input_ids=input_ids, attention_mask=attention_mask, labels=labels
         )
-        return outputs
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
@@ -94,10 +104,7 @@ class ReLLamaLightningModule(L.LightningModule):
         perplexity = torch.exp(loss)
 
         # Calculate bits per byte (BPB)
-        # BPB = (loss in nats) * (log_2(e)) / (bytes per token)
-        # For most tokenizers, bytes per token is approximately 4
-        bytes_per_token = 4  # This is an approximation
-        bpb = loss * math.log2(math.e) / bytes_per_token
+        bpb = loss * self.bpb_term
 
         # Add metrics logging
         self.log_dict(
@@ -105,6 +112,8 @@ class ReLLamaLightningModule(L.LightningModule):
             batch_size=batch["input_ids"].size(0),
         )
         return loss
+
+    # Modify configure_optimizers to use the JIT-compiled function
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
         optimizer = torch.optim.AdamW(
@@ -114,24 +123,48 @@ class ReLLamaLightningModule(L.LightningModule):
             betas=(self.cfg.training.beta1, self.cfg.training.beta2),
         )
 
-        # Define warmup and total training steps
+        # Extract values
         warmup_iters = self.cfg.training.warmup_steps
         total_iters = self.total_training_steps
         min_lr = self.cfg.training.min_learning_rate
         max_lr = self.cfg.training.max_learning_rate
 
-        # Define cosine learning rate function with warmup
-        def lr_lambda(it):
-            if it < warmup_iters:
-                return it / warmup_iters  # Linear warmup
-            elif it > total_iters:
-                return min_lr / max_lr  # Hold at min LR
-            else:
-                decay_ratio = (it - warmup_iters) / (total_iters - warmup_iters)
-                coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Cosine decay
-                return (min_lr / max_lr) + coeff * (1 - (min_lr / max_lr))
+        # Define a lambda function that wraps the JIT-compiled function
+        lr_scheduler_fn = lambda it: lr_lambda(
+            it, warmup_iters, total_iters, min_lr, max_lr
+        )
 
-        # Use LambdaLR to apply our custom schedule
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        # Use LambdaLR with the optimized learning rate function
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda=lr_scheduler_fn
+        )
 
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+
+
+# Define a TorchScript-compatible function for the learning rate schedule
+@torch.jit.script
+def lr_lambda(
+    it: int, warmup_iters: int, total_iters: int, min_lr: float, max_lr: float
+) -> float:
+    """
+    Computes learning rate scaling factor for warmup and cosine decay.
+
+    Args:
+        it (int): Current training step.
+        warmup_iters (int): Number of warmup steps.
+        total_iters (int): Total training steps.
+        min_lr (float): Minimum learning rate.
+        max_lr (float): Maximum learning rate.
+
+    Returns:
+        float: The learning rate multiplier.
+    """
+    if it < warmup_iters:
+        return float(it) / float(warmup_iters)  # Linear warmup
+    elif it > total_iters:
+        return min_lr / max_lr  # Hold at min LR
+    else:
+        decay_ratio = float(it - warmup_iters) / float(total_iters - warmup_iters)
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Cosine decay
+        return (min_lr / max_lr) + coeff * (1 - (min_lr / max_lr))
