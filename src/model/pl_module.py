@@ -20,7 +20,7 @@ class ReLLamaLightningModule(L.LightningModule):
     def __init__(
         self,
         cfg: DictConfig,
-        total_steps: int,
+        total_steps: int = None,
         tokenizer: Optional[ReLlamaTokenizer] = None,
     ) -> None:
         super().__init__()

@@ -9,6 +9,7 @@ defaults:
     - model: rellama
     - dataset: default
     - training: default
+    - eval: null
 
 hydra:
   output_subdir: null

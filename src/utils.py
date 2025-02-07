@@ -97,3 +97,27 @@ def remove_key_with_none_value(dic: Dict) -> Dict:
         Dict: New dictionary with None values removed
     """
     return {key: value for key, value in dic.items() if value is not None}
+
+
+def check_argument(
+    dic: Dict,
+    name: str,
+    arg_type: Type,
+    choices: List[Any] = None,
+    is_requried: bool = False,
+    help: str = None,
+) -> bool:
+    with open_dict(dic):
+        # Check if the argument is required
+        if is_requried and name not in dic:
+            raise ValueError(f"{name} is required!.({help})")
+        # Check argument type and choices
+        if name in dic:
+            if not isinstance(dic[name], arg_type):
+                raise ValueError(f"{name} should be {arg_type}. ({help})")
+            if choices is not None and dic[name] not in choices:
+                raise ValueError(f"{name} should be in {choices}. ({help})")
+        # Set default value for boolean args
+        if name not in dic and arg_type == bool:
+            dic[name] = False
+    return True
