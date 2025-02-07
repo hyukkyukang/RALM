@@ -1,14 +1,13 @@
-import torch
-from omegaconf import DictConfig
 from typing import *
 
-from transformers.models.llama.modeling_llama import (
-    LlamaMLP,
-    LlamaRMSNorm,
-    Cache,
-    FlashAttentionKwargs,
-)
+import torch
+from omegaconf import DictConfig
+from transformers.models.llama.modeling_llama import (Cache,
+                                                      FlashAttentionKwargs,
+                                                      LlamaRMSNorm)
+
 from src.model.rellama.attention import ReLlamaAttention
+from src.model.rellama.mlp import ReLlamaMLP
 
 
 class ReLlamaDecoderLayer(torch.nn.Module):
@@ -18,7 +17,7 @@ class ReLlamaDecoderLayer(torch.nn.Module):
 
         self.self_attn = ReLlamaAttention(config=config, layer_idx=layer_idx)
 
-        self.mlp = LlamaMLP(config)
+        self.mlp = ReLlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
