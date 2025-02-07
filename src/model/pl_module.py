@@ -92,13 +92,17 @@ class ReLLamaLightningModule(L.LightningModule):
         )
         loss = outputs.loss
         perplexity = torch.exp(loss)
+
+        # Calculate bits per byte (BPB)
+        # BPB = (loss in nats) * (log_2(e)) / (bytes per token)
+        # For most tokenizers, bytes per token is approximately 4
+        bytes_per_token = 4  # This is an approximation
+        bpb = loss * math.log2(math.e) / bytes_per_token
+
         # Add metrics logging
         self.log_dict(
-            {"loss": loss, "perplexity": perplexity},
+            {"loss": loss, "perplexity": perplexity, "bits_per_byte": bpb},
             batch_size=batch["input_ids"].size(0),
-            on_step=True,
-            on_epoch=True,
-            sync_dist=True,
         )
         return loss
 
