@@ -46,9 +46,11 @@ def main(cfg: DictConfig) -> None:
     # Initialize lightning module and call prepare_data to figure out the length of the dataset
     data_module = ReLLamaDataModule(cfg=cfg)
     data_module.prepare_data()
-    # Compute the total number of training steps
+    # Compute the total number of training steps for the learning rate scheduler
     total_steps = (
-        len(data_module) // cfg.training.gradient_accumulation_steps
+        len(data_module)
+        // cfg.training.gradient_accumulation_steps
+        // torch.cuda.device_count()
     ) * cfg.training.max_epochs
     model = ReLLamaLightningModule(
         cfg=cfg, total_steps=total_steps, tokenizer=data_module.tokenizer
