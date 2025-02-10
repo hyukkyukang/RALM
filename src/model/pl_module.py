@@ -80,6 +80,10 @@ class ReLLamaLightningModule(L.LightningModule):
 
         # Enable gradient checkpointing if specified in config
         if cfg.training.get("gradient_checkpointing", False):
+            log_if_rank_zero(
+                logger,
+                "Enabling gradient checkpointing...",
+            )
             causal_model.gradient_checkpointing_enable()
 
         return causal_model
