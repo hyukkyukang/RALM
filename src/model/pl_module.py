@@ -28,14 +28,14 @@ class ReLLamaLightningModule(L.LightningModule):
     def __init__(
         self,
         cfg: DictConfig,
-        total_steps: int = None,
+        total_optimization_steps: int = None,
         tokenizer: Optional[ReLlamaTokenizer] = None,
     ) -> None:
         super().__init__()
         ## Need to set this to False to avoid the automatic optimization
         self.automatic_optimization = False
         self.cfg = cfg
-        self.total_training_steps = total_steps
+        self.total_optimization_steps = total_optimization_steps
         self.bpb_term = math.log2(math.e) / 4  # 4 is bytes_per_token
         self.model: transformers.LlamaForCausalLM = self.initialize_language_model(
             cfg=cfg, tokenizer=tokenizer
@@ -171,7 +171,7 @@ class ReLLamaLightningModule(L.LightningModule):
 
         # Extract values
         warmup_iters = self.cfg.lr_scheduler.warmup_steps
-        total_iters = self.total_training_steps
+        total_iters = self.total_optimization_steps
         min_lr = self.cfg.lr_scheduler.min_learning_rate
         max_lr = self.cfg.lr_scheduler.max_learning_rate
 
@@ -275,4 +275,3 @@ def lr_lambda_linear_decay(
     else:
         # Linear decay to min_lr
         return min_lr + (max_lr - min_lr) * (total_iters - it) / total_iters
-

@@ -11,18 +11,15 @@ import hkkang_utils.misc as misc_utils
 import hydra
 import lightning as L
 import torch
-from lightning.pytorch.callbacks import (
-    LearningRateMonitor,
-    ModelCheckpoint,
-    ModelSummary,
-)
-from omegaconf import DictConfig
+from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
+                                         ModelSummary)
+from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
+from omegaconf import DictConfig
 
 from src.dataset import ReLLamaDataModule
 from src.model import ReLLamaLightningModule
 from src.utils import add_config, log_if_rank_zero
-from lightning.pytorch.loggers import TensorBoardLogger
 
 logger = logging.getLogger("PL_Trainer")
 
@@ -52,8 +49,9 @@ def main(cfg: DictConfig) -> None:
     # Initialize lightning module and call prepare_data to figure out the length of the dataset
     data_module = ReLLamaDataModule(cfg=cfg)
     data_module.prepare_data()
+    
     # Compute the total number of training steps for the learning rate scheduler
-    total_steps = (
+    total_optimization_steps = (
         len(data_module)
         // (
             cfg.training.gradient_accumulation_steps
@@ -62,10 +60,25 @@ def main(cfg: DictConfig) -> None:
         )
         * cfg.training.max_epochs
     )
-    model = ReLLamaLightningModule(
-        cfg=cfg, total_steps=total_steps, tokenizer=data_module.tokenizer
+    total_training_steps = (
+        len(data_module)
+        // (
+            cfg.training.per_device_train_batch_size
+            * torch.cuda.device_count()
+        )
+        * cfg.training.max_epochs
     )
-
+    log_if_rank_zero(logger, f"Total training steps: {total_training_steps}")
+    log_if_rank_zero(logger, f"Total optimization steps: {total_optimization_steps}")
+    
+    # Initialize lightning module
+    model = ReLLamaLightningModule(
+        cfg=cfg,
+        total_optimization_steps=total_optimization_steps,
+        tokenizer=data_module.tokenizer,
+    )
+    
+    # Initialize checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=default_root_dir,
         monitor="loss",
