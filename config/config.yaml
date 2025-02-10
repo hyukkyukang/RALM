@@ -10,6 +10,7 @@ defaults:
     - dataset: default
     - training: default
     - eval: null
+    - optimizer: adafactor
 
 hydra:
   output_subdir: null

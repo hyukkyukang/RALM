@@ -89,13 +89,14 @@ def predict(
         current_input_token_ids: List[List[int]] = []
         for b_idx in range(bsize):
             # Convert all the candidates to tokens
-            candidate_tokens = tokenizer.convert_ids_to_tokens(
-                line_encoded_candidates[b_idx]
-            )
+            candidate_tokens: List[str] = [
+                tokenizer.decode(item).lower().strip()
+                for item in line_encoded_candidates[b_idx]
+            ]
             # Find the first candidate which is not a stopword
             predicted_token_id = None
             for cand_idx, candidate_token in enumerate(candidate_tokens):
-                if candidate_token.lower() not in STOPWORDS_FROM_GPT2:
+                if candidate_token not in STOPWORDS_FROM_GPT2:
                     predicted_token_id = line_encoded_candidates[b_idx][cand_idx]
                     break
             assert predicted_token_id is not None, "No valid candidate found"
@@ -118,9 +119,10 @@ def main(cfg: DictConfig) -> None:
 
     # Load the pre-trained model and tokenizer
     device = "cuda"
-    use_rellama = False
+    use_rellama = True
     if use_rellama:
         model = ReLLamaLightningModule.load_from_checkpoint(cfg.ckpt_path).to(device)
+        model = model.model
         tokenizer = ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
     else:
         # Use GPT-small
@@ -174,11 +176,11 @@ def main(cfg: DictConfig) -> None:
 
             debug = False
             if debug:
-                print(f"Input: {input_contexts}")
-                print(f"Predicted: {predicted_word}")
-                print(f"Last word: {tokenized_dataset['last_word'][idx]}")
-                print(f"Accuracy: {accuracy}")
-                print("-" * 100)
+                logger.info(f"Input: {input_contexts}")
+                logger.info(f"Predicted: {predicted_word}")
+                logger.info(f"Last word: {tokenized_dataset['last_word'][idx]}")
+                logger.info(f"Accuracy: {accuracy}")
+                logger.info("-" * 100)
     logger.info(
         f"Accuracy: {sum(all_accuracies) / len(all_accuracies)} ({len(all_accuracies)} samples)"
     )

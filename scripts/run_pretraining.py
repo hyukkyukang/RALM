@@ -22,7 +22,7 @@ from lightning.pytorch.strategies import DDPStrategy
 from src.dataset import ReLLamaDataModule
 from src.model import ReLLamaLightningModule
 from src.utils import add_config, log_if_rank_zero
-from lightning.pytorch.loggers import TensorBoardLogger 
+from lightning.pytorch.loggers import TensorBoardLogger
 
 logger = logging.getLogger("PL_Trainer")
 
@@ -55,17 +55,16 @@ def main(cfg: DictConfig) -> None:
     # Compute the total number of training steps for the learning rate scheduler
     total_steps = (
         len(data_module)
-        // (cfg.training.gradient_accumulation_steps *
-            cfg.training.per_device_train_batch_size *
-            torch.cuda.device_count()
-        ) * cfg.training.max_epochs
+        // (
+            cfg.training.gradient_accumulation_steps
+            * cfg.training.per_device_train_batch_size
+            * torch.cuda.device_count()
+        )
+        * cfg.training.max_epochs
     )
     model = ReLLamaLightningModule(
         cfg=cfg, total_steps=total_steps, tokenizer=data_module.tokenizer
     )
-    # if cfg.training.use_torch_compile:
-    #     if torch.cuda.get_device_capability()[0] >= 7:
-    #         model = torch.compile(model, dynamic=True)
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=default_root_dir,
@@ -87,7 +86,9 @@ def main(cfg: DictConfig) -> None:
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.logging_steps,
         default_root_dir=default_root_dir,
-        logger=TensorBoardLogger(save_dir=default_root_dir, name=cfg._global.tag, default_hp_metric=False),
+        logger=TensorBoardLogger(
+            save_dir=default_root_dir, name=cfg._global.tag, default_hp_metric=False
+        ),
         strategy=DDPStrategy(
             timeout=timedelta(hours=4), static_graph=True, gradient_as_bucket_view=True
         ),
@@ -109,14 +110,21 @@ def main(cfg: DictConfig) -> None:
 
     # Rename the modules in the checkpoint when using torch compile
     # For the main process with rank 0 only
-    if (torch.distributed.get_rank() == 0 and 
-        cfg.training.use_torch_compile and 
-        torch.cuda.get_device_capability()[0] >= 7):
-        last_checkpoint_path = os.path.join(default_root_dir, f"version_{trainer.logger.version}","last.ckpt")
-        print("checkpoint_callback.best_model_path:", checkpoint_callback.best_model_path)
+    if (
+        torch.distributed.get_rank() == 0
+        and cfg.training.use_torch_compile
+        and torch.cuda.get_device_capability()[0] >= 7
+    ):
+        last_checkpoint_path = os.path.join(
+            default_root_dir, f"version_{trainer.logger.version}", "last.ckpt"
+        )
+        print(
+            "checkpoint_callback.best_model_path:", checkpoint_callback.best_model_path
+        )
         if os.path.exists(last_checkpoint_path):
             log_if_rank_zero(
-                logger, f"Renaming the modules in the checkpoint ({last_checkpoint_path}) for torch compile..."
+                logger,
+                f"Renaming the modules in the checkpoint ({last_checkpoint_path}) for torch compile...",
             )
             # Load the checkpoint
             checkpoint = torch.load(last_checkpoint_path)

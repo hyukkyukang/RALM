@@ -6,6 +6,7 @@ import lightning as L
 import torch
 import transformers
 from omegaconf import DictConfig
+from transformers.optimization import Adafactor
 
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
@@ -131,7 +132,7 @@ class ReLLamaLightningModule(L.LightningModule):
             # Clip gradients
             self.clip_gradients(
                 optimizer,
-                gradient_clip_val=self.cfg.training.gradient_clip_val,
+                gradient_clip_val=self.cfg.optimizer.gradient_clip_val,
                 gradient_clip_algorithm="norm",
             )
 
@@ -147,23 +148,75 @@ class ReLLamaLightningModule(L.LightningModule):
     # Modify configure_optimizers to use the JIT-compiled function
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.cfg.training.max_learning_rate,
-            weight_decay=self.cfg.training.weight_decay,
-            betas=(self.cfg.training.beta1, self.cfg.training.beta2),
-        )
+        # Choose optimizer based on config
+        log_if_rank_zero(logger, f"Using optimizer: {self.cfg.optimizer.name}")
+        if self.cfg.optimizer.name.lower() == "adafactor":
+            optimizer = Adafactor(
+                self.parameters(),
+                lr=self.cfg.optimizer.max_learning_rate,
+                weight_decay=self.cfg.optimizer.weight_decay,
+                beta1=self.cfg.optimizer.beta1,
+                scale_parameter=False,  # To use a manual (external) learning rate schedule
+                relative_step=False,  # We want to use our custom LR schedule
+                warmup_init=False,  # We'll handle warmup with our scheduler
+            )
+        elif self.cfg.optimizer.name.lower() == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.cfg.optimizer.max_learning_rate,
+                weight_decay=self.cfg.optimizer.weight_decay,
+                betas=(self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
+            )
+        elif self.cfg.optimizer.name.lower() == "lion":
+            from lion_pytorch import Lion
+
+            optimizer = Lion(
+                self.parameters(),
+                lr=self.cfg.optimizer.max_learning_rate,
+                weight_decay=self.cfg.optimizer.weight_decay,
+                betas=(self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
+                use_triton=True,  # set this to True to use cuda kernel w/ Triton lang (Tillet et al)
+            )
+        else:
+            raise ValueError(f"Optimizer {self.cfg.optimizer.name} not supported")
+
+        # Torch compile the optimizer if the config is set to True and the GPU has the capability to compile the optimizer
+        if self.cfg.training.use_torch_compile:
+            if torch.cuda.get_device_capability()[0] >= 7:
+                log_if_rank_zero(
+                    logger,
+                    "Compiling the optimizer with torch compile...",
+                )
+                optimizer = torch.compile(optimizer)
+            else:
+                log_if_rank_zero(
+                    logger,
+                    "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile.",
+                )
 
         # Extract values
-        warmup_iters = self.cfg.training.warmup_steps
+        warmup_iters = self.cfg.optimizer.warmup_steps
         total_iters = self.total_training_steps
-        min_lr = self.cfg.training.min_learning_rate
-        max_lr = self.cfg.training.max_learning_rate
+        min_lr = self.cfg.optimizer.min_learning_rate
+        max_lr = self.cfg.optimizer.max_learning_rate
 
         # Define a lambda function that wraps the JIT-compiled function
-        lr_scheduler_fn = lambda it: lr_lambda(
-            it, warmup_iters, total_iters, min_lr, max_lr
+        log_if_rank_zero(
+            logger,
+            f"Using learning rate scheduler: {self.cfg.optimizer.lr_scheduler}",
         )
+        if self.cfg.optimizer.lr_scheduler.lower() == "cosine_decay":
+            lr_scheduler_fn = lambda it: lr_lambda_cosine_decay(
+                it, warmup_iters, total_iters, max_lr, min_lr
+            )
+        elif self.cfg.optimizer.lr_scheduler.lower() == "linear_decay":
+            lr_scheduler_fn = lambda it: lr_lambda_linear_decay(
+                it, warmup_iters, total_iters, max_lr, min_lr
+            )
+        else:
+            raise ValueError(
+                f"Learning rate scheduler {self.cfg.optimizer.lr_scheduler} not supported"
+            )
 
         # Use LambdaLR with the optimized learning rate function
         scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -175,8 +228,8 @@ class ReLLamaLightningModule(L.LightningModule):
 
 # Define a TorchScript-compatible function for the learning rate schedule
 @torch.jit.script
-def lr_lambda(
-    it: int, warmup_iters: int, total_iters: int, min_lr: float, max_lr: float
+def lr_lambda_cosine_decay(
+    it: int, warmup_iters: int, total_iters: int, max_lr: float, min_lr: float
 ) -> float:
     """
     Computes learning rate scaling factor for warmup and cosine decay.
@@ -200,3 +253,28 @@ def lr_lambda(
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Cosine decay
         # Ensure we don't go below min_lr
         return max(min_lr / max_lr, (min_lr + coeff * (max_lr - min_lr)) / max_lr)
+
+
+@torch.jit.script
+def lr_lambda_linear_decay(
+    it: int, warmup_iters: int, total_iters: int, max_lr: float, min_lr: float = 0.0
+) -> float:
+    """
+    Computes learning rate scaling factor for warmup and linear decay to zero.
+
+    Args:
+        it (int): Current training step.
+        warmup_iters (int): Number of warmup steps.
+        total_iters (int): Total training steps.
+        max_lr (float): Maximum learning rate.
+
+    Returns:
+        float: The learning rate multiplier.
+    """
+    if it < warmup_iters:
+        return float(it) / float(warmup_iters)  # Linear warmup
+    elif it >= total_iters:
+        return min_lr
+    else:
+        # Linear decay to min_lr
+        return min_lr + (max_lr - min_lr) * (total_iters - it) / total_iters
