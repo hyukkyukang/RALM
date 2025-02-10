@@ -178,7 +178,7 @@ class ReLLamaLightningModule(L.LightningModule):
         # Define a lambda function that wraps the JIT-compiled function
         log_if_rank_zero(
             logger,
-            f"Using learning rate scheduler: {self.cfg.lr_scheduler.name}",
+            f"Using learning rate scheduler: {self.cfg.lr_scheduler.name} with warmup steps: {warmup_iters} and total steps: {total_iters} (max lr: {max_lr}, min lr: {min_lr})",
         )
         if self.cfg.lr_scheduler.name == "cosine_decay":
             lr_scheduler_fn = lambda it: lr_lambda_cosine_decay(
