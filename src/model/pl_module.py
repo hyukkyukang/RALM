@@ -108,21 +108,21 @@ class ReLLamaLightningModule(L.LightningModule):
             labels=batch["labels"],
         )
         loss = outputs.loss
-        
+
         # Calculate Perplexity and bits per byte (BPB)
         perplexity = torch.exp(loss)
         bpb = loss * self.bpb_term
-
-        # Backward
-        # Average the loss over the gradient accumulation steps
-        loss = loss / self.cfg.training.gradient_accumulation_steps
-        self.manual_backward(loss)
 
         # Add metrics logging
         self.log_dict(
             {"loss": loss, "perplexity": perplexity, "bits_per_byte": bpb},
             batch_size=batch["input_ids"].size(0),
         )
+
+        # Backward
+        # Average the loss over the gradient accumulation steps
+        loss = loss / self.cfg.training.gradient_accumulation_steps
+        self.manual_backward(loss)
 
         # accumulate gradients of N batches
         optimizer = self.optimizers()
