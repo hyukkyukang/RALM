@@ -24,12 +24,15 @@ class ReLLamaLightningModule(L.LightningModule):
         tokenizer: Optional[ReLlamaTokenizer] = None,
     ) -> None:
         super().__init__()
+        ## Need to set this to False to avoid the automatic optimization
+        self.automatic_optimization = False
         self.cfg = cfg
         self.total_training_steps = total_steps
         self.bpb_term = math.log2(math.e) / 4  # 4 is bytes_per_token
         self.model: transformers.LlamaForCausalLM = self.initialize_language_model(
             cfg=cfg, tokenizer=tokenizer
         )
+        # Store all arguments within the model checkpoint.
         self.save_hyperparameters(cfg)
 
     def initialize_language_model(
@@ -61,15 +64,6 @@ class ReLLamaLightningModule(L.LightningModule):
             causal_model.apply(initialize_weights)
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
-        if cfg.training.use_torch_compile:
-            if torch.cuda.get_device_capability()[0] >= 7:
-                causal_model = torch.compile(causal_model, dynamic=True)
-            else:
-                log_if_rank_zero(
-                    logger,
-                    "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile.",
-                )
-
         # Enable gradient checkpointing if specified in config
         if cfg.training.get("gradient_checkpointing", False):
             causal_model.gradient_checkpointing_enable()
@@ -111,7 +105,36 @@ class ReLLamaLightningModule(L.LightningModule):
             {"loss": loss, "perplexity": perplexity, "bits_per_byte": bpb},
             batch_size=batch["input_ids"].size(0),
         )
-        return loss
+        
+        # Average the loss over the gradient accumulation steps
+        loss = loss / self.cfg.training.gradient_accumulation_steps
+
+        # Backward
+        self.manual_backward(loss)
+        self.log_dict(
+            {"loss": batch_idx},
+            batch_size=batch["input_ids"].size(0),
+        )
+
+        # accumulate gradients of N batches
+        optimizer = self.optimizers()
+
+        if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
+            # Clip gradients
+            self.clip_gradients(
+                optimizer,
+                gradient_clip_val=self.cfg.training.gradient_clip_val,
+                gradient_clip_algorithm="norm",
+            )
+
+            # Update weights
+            optimizer.step()
+            # Update scheduler
+            self.lr_schedulers().step()
+            # Zero the gradients
+            optimizer.zero_grad()
+
+        return None
 
     # Modify configure_optimizers to use the JIT-compiled function
 
@@ -162,10 +185,10 @@ def lr_lambda(
     """
     if it < warmup_iters:
         return float(it) / float(warmup_iters)  # Linear warmup
-    elif it >= total_iters:  # Fix the condition
+    elif it >= total_iters:
         return min_lr / max_lr  # Hold at min LR
     else:
         decay_ratio = float(it - warmup_iters) / float(total_iters - warmup_iters)
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Cosine decay
-        # return coeff * (max_lr - min_lr) / max_lr + min_lr / max_lr  # Adjusted formula
-        return (min_lr + coeff * (max_lr - min_lr)) / max_lr
+        # Ensure we don't go below min_lr
+        return max(min_lr / max_lr, (min_lr + coeff * (max_lr - min_lr)) / max_lr)

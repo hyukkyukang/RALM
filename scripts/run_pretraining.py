@@ -17,12 +17,18 @@ from lightning.pytorch.callbacks import (
     ModelSummary,
 )
 from omegaconf import DictConfig
+from lightning.pytorch.strategies import DDPStrategy
 
 from src.dataset import ReLLamaDataModule
 from src.model import ReLLamaLightningModule
 from src.utils import add_config, log_if_rank_zero
+from lightning.pytorch.loggers import TensorBoardLogger 
 
 logger = logging.getLogger("PL_Trainer")
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+torch.set_float32_matmul_precision("high")
+torch._dynamo.config.cache_size_limit = 64
 
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
@@ -49,12 +55,17 @@ def main(cfg: DictConfig) -> None:
     # Compute the total number of training steps for the learning rate scheduler
     total_steps = (
         len(data_module)
-        // cfg.training.gradient_accumulation_steps
-        // torch.cuda.device_count()
-    ) * cfg.training.max_epochs
+        // (cfg.training.gradient_accumulation_steps *
+            cfg.training.per_device_train_batch_size *
+            torch.cuda.device_count()
+        ) * cfg.training.max_epochs
+    )
     model = ReLLamaLightningModule(
         cfg=cfg, total_steps=total_steps, tokenizer=data_module.tokenizer
     )
+    if cfg.training.use_torch_compile:
+        if torch.cuda.get_device_capability()[0] >= 7:
+            model = torch.compile(model, dynamic=True)
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=default_root_dir,
@@ -74,10 +85,12 @@ def main(cfg: DictConfig) -> None:
         accelerator="gpu",
         devices=torch.cuda.device_count(),
         precision=cfg.training.precision,
-        gradient_clip_val=cfg.training.gradient_clip_val,
         log_every_n_steps=cfg.training.logging_steps,
+        # gradient_clip_val=cfg.training.gradient_clip_val,
+        # accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
         default_root_dir=default_root_dir,
-        strategy=L.pytorch.strategies.DDPStrategy(
+        logger=TensorBoardLogger(save_dir=default_root_dir, name=cfg._global.tag, default_hp_metric=False),
+        strategy=DDPStrategy(
             timeout=timedelta(hours=4), static_graph=True, gradient_as_bucket_view=True
         ),
         callbacks=[
@@ -86,10 +99,6 @@ def main(cfg: DictConfig) -> None:
             checkpoint_callback,
         ],
     )
-    # Prevent logging `hp_metric`
-    if trainer.logger:
-        trainer.logger.log_hyperparams = lambda params, metrics=None: None
-
     # Start training
     log_if_rank_zero(logger, "Starting lightning fit...")
     if cfg.training.resume_ckpt_path:
@@ -101,20 +110,28 @@ def main(cfg: DictConfig) -> None:
     log_if_rank_zero(logger, "Training completed successfully!")
 
     # Rename the modules in the checkpoint when using torch compile
-    if cfg.training.use_torch_compile and torch.cuda.get_device_capability()[0] >= 7:
-        log_if_rank_zero(
-            logger, "Renaming the modules in the checkpoint for torch compile..."
-        )
-        # Load the checkpoint
-        checkpoint = torch.load(checkpoint_callback.best_model_path)
-        # Repair the checkpoint
-        checkpoint["state_dict"] = {
-            k.replace("._orig_mod.", "."): v
-            for k, v in checkpoint["state_dict"].items()
-        }
-        # Save the repaired checkpoint
-        torch.save(checkpoint, checkpoint_callback.best_model_path)
-        log_if_rank_zero(logger, "Checkpoint saved successfully!")
+    # For the main process with rank 0 only
+    if (torch.distributed.get_rank() == 0 and 
+        cfg.training.use_torch_compile and 
+        torch.cuda.get_device_capability()[0] >= 7):
+        last_checkpoint_path = os.path.join(default_root_dir, f"version_{trainer.logger.version}","last.ckpt")
+        print("checkpoint_callback.best_model_path:", checkpoint_callback.best_model_path)
+        if os.path.exists(last_checkpoint_path):
+            log_if_rank_zero(
+                logger, f"Renaming the modules in the checkpoint ({last_checkpoint_path}) for torch compile..."
+            )
+            # Load the checkpoint
+            checkpoint = torch.load(last_checkpoint_path)
+            # Repair the checkpoint
+            checkpoint["state_dict"] = {
+                k.replace("._orig_mod.", "."): v
+                for k, v in checkpoint["state_dict"].items()
+            }
+            # Save the repaired checkpoint
+            torch.save(checkpoint, last_checkpoint_path)
+            log_if_rank_zero(logger, "Checkpoint saved successfully!")
+        else:
+            log_if_rank_zero(logger, "No checkpoint found to rename.")
 
     return None
 

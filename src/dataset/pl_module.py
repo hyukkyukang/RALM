@@ -162,4 +162,6 @@ class ReLLamaDataModule(L.LightningDataModule):
             num_workers=self.cfg.training.train_num_workers,
             collate_fn=data_collator,
             shuffle=True,
+            drop_last=True,
+            pin_memory=True,
         )
