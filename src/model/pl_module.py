@@ -64,6 +64,19 @@ class ReLLamaLightningModule(L.LightningModule):
             causal_model.apply(initialize_weights)
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
+        if cfg.training.use_torch_compile:
+            if torch.cuda.get_device_capability()[0] >= 7:
+                log_if_rank_zero(
+                    logger,
+                    "Compiling the model with torch compile...",
+                )
+                causal_model = torch.compile(causal_model, dynamic=True)
+            else:
+                log_if_rank_zero(
+                    logger,
+                    "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile.",
+                )
+
         # Enable gradient checkpointing if specified in config
         if cfg.training.get("gradient_checkpointing", False):
             causal_model.gradient_checkpointing_enable()
@@ -95,24 +108,19 @@ class ReLLamaLightningModule(L.LightningModule):
             labels=batch["labels"],
         )
         loss = outputs.loss
+        
+        # Calculate Perplexity and bits per byte (BPB)
         perplexity = torch.exp(loss)
-
-        # Calculate bits per byte (BPB)
         bpb = loss * self.bpb_term
+
+        # Backward
+        # Average the loss over the gradient accumulation steps
+        loss = loss / self.cfg.training.gradient_accumulation_steps
+        self.manual_backward(loss)
 
         # Add metrics logging
         self.log_dict(
             {"loss": loss, "perplexity": perplexity, "bits_per_byte": bpb},
-            batch_size=batch["input_ids"].size(0),
-        )
-        
-        # Average the loss over the gradient accumulation steps
-        loss = loss / self.cfg.training.gradient_accumulation_steps
-
-        # Backward
-        self.manual_backward(loss)
-        self.log_dict(
-            {"loss": batch_idx},
             batch_size=batch["input_ids"].size(0),
         )
 

@@ -63,9 +63,9 @@ def main(cfg: DictConfig) -> None:
     model = ReLLamaLightningModule(
         cfg=cfg, total_steps=total_steps, tokenizer=data_module.tokenizer
     )
-    if cfg.training.use_torch_compile:
-        if torch.cuda.get_device_capability()[0] >= 7:
-            model = torch.compile(model, dynamic=True)
+    # if cfg.training.use_torch_compile:
+    #     if torch.cuda.get_device_capability()[0] >= 7:
+    #         model = torch.compile(model, dynamic=True)
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=default_root_dir,
@@ -86,8 +86,6 @@ def main(cfg: DictConfig) -> None:
         devices=torch.cuda.device_count(),
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.logging_steps,
-        # gradient_clip_val=cfg.training.gradient_clip_val,
-        # accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
         default_root_dir=default_root_dir,
         logger=TensorBoardLogger(save_dir=default_root_dir, name=cfg._global.tag, default_hp_metric=False),
         strategy=DDPStrategy(
