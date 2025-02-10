@@ -5,6 +5,7 @@ from typing import *
 import lightning as L
 import torch
 import transformers
+from lion_pytorch import Lion
 from omegaconf import DictConfig
 from transformers.optimization import Adafactor
 
@@ -16,6 +17,12 @@ from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLLamaLightningModule")
 
+def get_compile_decorator(use_compile: bool = True, fullgraph: bool = False, mode: str = "default"):
+    """Returns torch.compile decorator if GPU is capable and use_compile is True, otherwise returns a no-op decorator"""
+    if use_compile and torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7:
+        log_if_rank_zero(logger, f"Compiling the module with torch compile in {mode} mode...")
+        return torch.compile(fullgraph=fullgraph, mode=mode)
+    return lambda x: x  # no-op decorator
 
 class ReLLamaLightningModule(L.LightningModule):
     def __init__(
@@ -35,6 +42,7 @@ class ReLLamaLightningModule(L.LightningModule):
         )
         # Store all arguments within the model checkpoint.
         self.save_hyperparameters(cfg)
+        self.compiled_step = get_compile_decorator(cfg.training.use_torch_compile, fullgraph=False)(self._compiled_step)
 
     def initialize_language_model(
         self, cfg: DictConfig, tokenizer: Optional[ReLlamaTokenizer] = None
@@ -71,7 +79,7 @@ class ReLLamaLightningModule(L.LightningModule):
                     logger,
                     "Compiling the model with torch compile...",
                 )
-                causal_model = torch.compile(causal_model, dynamic=True)
+                causal_model = torch.compile(causal_model, dynamic=True, mode="max-autotune")
             else:
                 log_if_rank_zero(
                     logger,
@@ -107,32 +115,11 @@ class ReLLamaLightningModule(L.LightningModule):
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
-        outputs = self(
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            labels=batch["labels"],
-        )
-        loss = outputs.loss
-
-        # Calculate Perplexity and bits per byte (BPB)
-        perplexity = torch.exp(loss)
-        bpb = loss * self.bpb_term
-
-        # Add metrics logging
-        self.log_dict(
-            {"loss": loss, "perplexity": perplexity, "bits_per_byte": bpb},
-            batch_size=batch["input_ids"].size(0),
-        )
-
-        # Backward
-        # Average the loss over the gradient accumulation steps
-        loss = loss / self.cfg.training.gradient_accumulation_steps
-        self.manual_backward(loss)
-
-        # accumulate gradients of N batches
-        optimizer = self.optimizers()
+        
+        self.compiled_step(batch["input_ids"], batch["attention_mask"], batch["labels"])
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
+            optimizer = self.optimizers()
             # Clip gradients
             self.clip_gradients(
                 optimizer,
@@ -154,29 +141,27 @@ class ReLLamaLightningModule(L.LightningModule):
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
         # Choose optimizer based on config
         log_if_rank_zero(logger, f"Using optimizer: {self.cfg.optimizer.name}")
-        if self.cfg.optimizer.name.lower() == "adafactor":
+        if self.cfg.optimizer.name == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.cfg.lr_scheduler.max_learning_rate,
+                weight_decay=self.cfg.optimizer.weight_decay,
+                betas=(self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
+            )
+        elif self.cfg.optimizer.name == "adafactor":
             optimizer = Adafactor(
                 self.parameters(),
-                lr=self.cfg.optimizer.max_learning_rate,
+                lr=self.cfg.lr_scheduler.max_learning_rate,
                 weight_decay=self.cfg.optimizer.weight_decay,
                 beta1=self.cfg.optimizer.beta1,
                 scale_parameter=False,  # To use a manual (external) learning rate schedule
                 relative_step=False,  # We want to use our custom LR schedule
                 warmup_init=False,  # We'll handle warmup with our scheduler
             )
-        elif self.cfg.optimizer.name.lower() == "adamw":
-            optimizer = torch.optim.AdamW(
-                self.parameters(),
-                lr=self.cfg.optimizer.max_learning_rate,
-                weight_decay=self.cfg.optimizer.weight_decay,
-                betas=(self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
-            )
-        elif self.cfg.optimizer.name.lower() == "lion":
-            from lion_pytorch import Lion
-
+        elif self.cfg.optimizer.name == "lion":
             optimizer = Lion(
                 self.parameters(),
-                lr=self.cfg.optimizer.max_learning_rate,
+                lr=self.cfg.lr_scheduler.max_learning_rate,
                 weight_decay=self.cfg.optimizer.weight_decay,
                 betas=(self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
                 use_triton=True,  # set this to True to use cuda kernel w/ Triton lang (Tillet et al)
@@ -184,42 +169,28 @@ class ReLLamaLightningModule(L.LightningModule):
         else:
             raise ValueError(f"Optimizer {self.cfg.optimizer.name} not supported")
 
-        # Torch compile the optimizer if the config is set to True and the GPU has the capability to compile the optimizer
-        if self.cfg.training.use_torch_compile:
-            if torch.cuda.get_device_capability()[0] >= 7:
-                log_if_rank_zero(
-                    logger,
-                    "Compiling the optimizer with torch compile...",
-                )
-                optimizer = torch.compile(optimizer)
-            else:
-                log_if_rank_zero(
-                    logger,
-                    "Torch compile is not supported on this GPU. Use_torch_compile is set to True, but the GPU does not support torch compile.",
-                )
-
         # Extract values
-        warmup_iters = self.cfg.optimizer.warmup_steps
+        warmup_iters = self.cfg.lr_scheduler.warmup_steps
         total_iters = self.total_training_steps
-        min_lr = self.cfg.optimizer.min_learning_rate
-        max_lr = self.cfg.optimizer.max_learning_rate
+        min_lr = self.cfg.lr_scheduler.min_learning_rate
+        max_lr = self.cfg.lr_scheduler.max_learning_rate
 
         # Define a lambda function that wraps the JIT-compiled function
         log_if_rank_zero(
             logger,
-            f"Using learning rate scheduler: {self.cfg.optimizer.lr_scheduler}",
+            f"Using learning rate scheduler: {self.cfg.lr_scheduler.name}",
         )
-        if self.cfg.optimizer.lr_scheduler.lower() == "cosine_decay":
+        if self.cfg.lr_scheduler.name == "cosine_decay":
             lr_scheduler_fn = lambda it: lr_lambda_cosine_decay(
                 it, warmup_iters, total_iters, max_lr, min_lr
             )
-        elif self.cfg.optimizer.lr_scheduler.lower() == "linear_decay":
+        elif self.cfg.lr_scheduler.name == "linear_decay":
             lr_scheduler_fn = lambda it: lr_lambda_linear_decay(
                 it, warmup_iters, total_iters, max_lr, min_lr
             )
         else:
             raise ValueError(
-                f"Learning rate scheduler {self.cfg.optimizer.lr_scheduler} not supported"
+                f"Learning rate scheduler {self.cfg.lr_scheduler.name} not supported"
             )
 
         # Use LambdaLR with the optimized learning rate function
@@ -229,7 +200,29 @@ class ReLLamaLightningModule(L.LightningModule):
 
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
+    def _compiled_step(self, input_ids, attention_mask, labels):
+        outputs = self(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+        )
+        # Get the loss and calculate perplexity and bits per byte (BPB)
+        loss = outputs.loss
+        perplexity = torch.exp(loss)
+        bpb = loss * self.bpb_term
 
+        # Add metrics logging
+        self.log_dict(
+            {"loss": loss, "perplexity": perplexity, "bits_per_byte": bpb},
+            batch_size=input_ids.size(0),
+        )
+
+        # Average the loss over the gradient accumulation steps
+        loss = loss / self.cfg.training.gradient_accumulation_steps
+        # Backward
+        self.manual_backward(loss)
+        return None
+    
 # Define a TorchScript-compatible function for the learning rate schedule
 @torch.jit.script
 def lr_lambda_cosine_decay(
@@ -282,3 +275,4 @@ def lr_lambda_linear_decay(
     else:
         # Linear decay to min_lr
         return min_lr + (max_lr - min_lr) * (total_iters - it) / total_iters
+

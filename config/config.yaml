@@ -10,7 +10,8 @@ defaults:
     - dataset: default
     - training: default
     - eval: null
-    - optimizer: adafactor
+    - optimizer: adamw
+    - lr_scheduler: linear_decay
 
 hydra:
   output_subdir: null
