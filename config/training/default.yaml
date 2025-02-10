@@ -1,7 +1,7 @@
 # Optimization parameters
 precision: 16-mixed
-gradient_accumulation_steps: 10
-per_device_train_batch_size: 2
+gradient_accumulation_steps: 12
+per_device_train_batch_size: 18
 per_device_eval_batch_size: 60
 max_epochs: 1
 
