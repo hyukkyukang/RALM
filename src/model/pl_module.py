@@ -130,7 +130,12 @@ class ReLLamaLightningModule(L.LightningModule):
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
 
-        self.compiled_step(batch["input_ids"], batch["attention_mask"], batch["labels"])
+        self.compiled_step(
+            batch["input_ids"],
+            batch["attention_mask"],
+            batch["labels"],
+            batch["avg_char_in_token"],
+        )
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
             optimizer = self.optimizers()
@@ -214,7 +219,13 @@ class ReLLamaLightningModule(L.LightningModule):
 
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
-    def _compiled_step(self, input_ids, attention_mask, labels):
+    def _compiled_step(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        labels: torch.Tensor,
+        avg_char_in_token: float,
+    ) -> None:
         outputs = self(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -223,7 +234,13 @@ class ReLLamaLightningModule(L.LightningModule):
         # Get the loss and calculate perplexity and bits per byte (BPB)
         loss = outputs.loss
         perplexity = torch.exp(loss)
-        bpb = loss * self.bpb_term
+        # bpb = loss * self.bpb_term
+
+        # Convert loss (nats) to bits
+        loss_in_bits = loss * math.log2(math.e)
+
+        # Compute bits per byte (BPB)
+        bpb = loss_in_bits / avg_char_in_token
 
         # Add metrics logging
         self.log_dict(

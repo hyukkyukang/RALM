@@ -7,8 +7,8 @@ from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import DataCollatorForLanguageModeling
 
+from src.dataset.collate import ReLLamaDataCollator
 from src.tokenizer import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
@@ -153,9 +153,7 @@ class ReLLamaDataModule(L.LightningDataModule):
         )
 
     def train_dataloader(self) -> DataLoader:
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=self.tokenizer, mlm=False
-        )
+        data_collator = ReLLamaDataCollator(tokenizer=self.tokenizer, mlm=False)
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
