@@ -177,8 +177,8 @@ class ReLLamaLightningModule(L.LightningModule):
         gathered_accuracies = self.all_gather(self.test_step_outputs)
         # Calculate the accuracy
         accuracy = sum(gathered_accuracies) / len(gathered_accuracies)
-        self.log("accuracy", accuracy)
-        return {'accuracy': accuracy}
+        log_if_rank_zero(logger, f"Accuracy: {accuracy} (Total: {len(gathered_accuracies)})")
+        return None
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
         # Choose optimizer based on config

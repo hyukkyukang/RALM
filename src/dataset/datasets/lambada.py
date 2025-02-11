@@ -1,11 +1,14 @@
 import logging
+import os
 from typing import *
 
+import hkkang_utils.file as file_utils
 from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import split_text_into_context_and_last_word
+from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("LambadaDataset")
@@ -15,8 +18,13 @@ class LambadaDataset(BaseDataset):
     """Dataset class for the LAMBADA (Language Modeling Broadened to Account for Discourse Aspects) dataset.
     This dataset is designed to evaluate the capability of models to understand long-range dependencies."""
     
-    def __init__(self, cfg: DictConfig, tokenized_data: Dataset | None = None):
-        super().__init__(cfg, tokenized_data)
+    def __init__(self, cfg: DictConfig, tokenizer: ReLlamaTokenizer, tokenized_data: Dataset | None = None):
+        super().__init__(cfg, tokenizer, tokenized_data)
+
+    @property
+    def tokenized_cache_path(self) -> str:
+        suffix: str = "gpt2_author" if self.cfg.dataset.use_gpt2_author_data else "hf"
+        return os.path.join(self.hf_cache_dir_path, f"tokenized_{suffix}")
 
     def _load_dataset(self) -> Dataset:
         """Loads and preprocesses the LAMBADA dataset.
@@ -24,13 +32,19 @@ class LambadaDataset(BaseDataset):
         Returns:
             Dataset: Processed dataset with text split into context and last word.
         """
-        # Load the raw dataset from Hugging Face
-        dataset = load_dataset(
-            self.cfg.dataset.huggingface_dataset_name,
-            split=self.cfg.dataset.split,
-            cache_dir=self.hf_cache_dir_path,
-            num_proc=8,
-        )
+        if self.cfg.dataset.use_gpt2_author_data:
+            # Load the raw dataset from local file
+            local_file_path = os.path.join(self.cfg._global.root_dir_path, self.cfg.dataset.dir_name, self.cfg.dataset.gpt_2_author_file_name)
+            dataset: List[Dict[str, Any]] = file_utils.read_jsonl_file(local_file_path)
+            dataset = Dataset.from_list(dataset)
+        else:
+            # Load the raw dataset from Hugging Face
+            dataset = load_dataset(
+                self.cfg.dataset.huggingface_dataset_name,
+                split=self.cfg.dataset.split,
+                cache_dir=self.hf_cache_dir_path,
+                num_proc=8,
+            )
         log_if_rank_zero(
             logger,
             f"Splitting {len(dataset)} text into context and last word...",
@@ -41,6 +55,10 @@ class LambadaDataset(BaseDataset):
             batched=False,
         )
         return dataset
+
+    def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
+        texts = [str(text) if text is not None else "" for text in examples["context"]]
+        return self.tokenizer(texts)
 
 
 class LambadaDataCollator:

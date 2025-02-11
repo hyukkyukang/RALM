@@ -6,4 +6,3 @@ remove_columns:
   - text
   - source_id
   - source
-truncate_ok: True # This dataset is for training, so we enable truncation.

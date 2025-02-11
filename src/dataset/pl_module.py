@@ -83,35 +83,35 @@ class ReLLamaDataModule(L.LightningDataModule):
     def prepare_data(self) -> None:
         """Downloads the dataset if not already present.
         This method is called only on 1 GPU in distributed training."""
+        dataset: BaseDataset = self.dataset_class(cfg=self.cfg, tokenizer=self.tokenizer)
         try:
-            if not os.path.exists(self.tokenized_dataset_path):
+            if not os.path.exists(dataset.tokenized_cache_path):
                 # Download the dataset from the hub
                 log_if_rank_zero(
                     logger,
                     f"Downloading {self.cfg.dataset.name} data ({self.cfg.dataset.split} split) into {self.hf_cache_dir_path}",
                 )
-                dataset: BaseDataset = self.dataset_class(cfg=self.cfg)
+                dataset.load_dataset()
 
                 # Tokenize the dataset and save as a cache file
                 log_if_rank_zero(logger, "Tokenizing dataset...")
                 dataset.tokenize_data(
-                    self.tokenize_function,
                     batched=True,
                     remove_columns=self.cfg.dataset.remove_columns,
                 )
 
                 # Check if the directory exists
-                if not os.path.exists(self.tokenized_dataset_path):
+                if not os.path.exists(dataset.tokenized_cache_path):
                     log_if_rank_zero(
                         logger,
-                        f"Directory {self.tokenized_dataset_path} does not exist. Creating it.",
+                        f"Directory {dataset.tokenized_cache_path} does not exist. Creating it.",
                     )
-                    os.makedirs(self.tokenized_dataset_path)
+                    os.makedirs(dataset.tokenized_cache_path)
                 # Save the tokenized dataset
                 log_if_rank_zero(
-                    logger, f"Saving tokenized dataset to {self.tokenized_dataset_path}"
+                    logger, f"Saving tokenized dataset to {dataset.tokenized_cache_path}"
                 )
-                dataset.save_to_disk(self.tokenized_dataset_path)
+                dataset.save_to_disk(dataset.tokenized_cache_path)
 
                 log_if_rank_zero(
                     logger, f"Number of tokens in the dataset: {dataset.total_tokens}"
@@ -120,7 +120,7 @@ class ReLLamaDataModule(L.LightningDataModule):
             else:
                 # Load the cached dataset
                 train_dataset: BaseDataset = self.dataset_class.load_from_disk(
-                    cfg=self.cfg, path=self.tokenized_dataset_path
+                    cfg=self.cfg, tokenizer=self.tokenizer, path=dataset.tokenized_cache_path
                 )
                 self.dataset_size = len(train_dataset)
         except Exception as e:
@@ -134,15 +134,16 @@ class ReLLamaDataModule(L.LightningDataModule):
         Args:
             stage: Either 'fit', 'validate', 'test', or 'predict'. Currently unused.
         """
+        dataset: BaseDataset = self.dataset_class(cfg=self.cfg, tokenizer=self.tokenizer)
         try:
-            if not os.path.exists(self.tokenized_dataset_path):
+            if not os.path.exists(dataset.tokenized_cache_path):
                 raise FileNotFoundError(
-                    f"Tokenized dataset not found at {self.tokenized_dataset_path}. Run prepare_data first."
+                    f"Tokenized dataset not found at {dataset.tokenized_cache_path}. Run prepare_data first."
                 )
 
             # Load the cached tokenized dataset instead of the raw dataset
             self.train_dataset: BaseDataset = self.dataset_class.load_from_disk(
-                cfg=self.cfg, path=self.tokenized_dataset_path
+                cfg=self.cfg, tokenizer=self.tokenizer, path=dataset.tokenized_cache_path
             )
             log_if_rank_zero(
                 logger,
@@ -154,20 +155,6 @@ class ReLLamaDataModule(L.LightningDataModule):
             raise
 
         return None
-
-    def tokenize_function(self, examples: Dict) -> Dict:
-        # Handle potential None or empty strings
-        texts = [str(text) if text is not None else "" for text in examples["text"]]
-        if self.cfg.dataset.truncate_ok:
-            return self.tokenizer(
-                texts,
-                truncation=True,
-                padding="max_length",
-                max_length=self.max_length,
-                return_tensors="pt",
-            )
-        else:
-            return self.tokenizer(texts)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

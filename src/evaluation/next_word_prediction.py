@@ -52,11 +52,10 @@ def predict_next_tokens(
         all_token_ids.append(predicted_token_id)
 
         # Update the input tensor to pass to the next step
-        current_input_token_ids = torch.tensor(predicted_token_id).to(model.device)
+        current_input_token_ids = torch.tensor([predicted_token_id]).to(model.device)
 
     # Convert the decoded sequences to a list of strings
-    decoded_sequences = [tokenizer.decode(ids) for ids in all_token_ids]
-    return decoded_sequences[0]
+    return tokenizer.decode(all_token_ids)
 
 
 @torch.no_grad()
@@ -68,13 +67,13 @@ def evaluate_next_word_prediction(
 ) -> bool:
     basic_tokenizer = SingletonBasicTokenizer()
     # Get the predicted completions
-    predictions: str = predict_next_tokens(
+    text_with_predictions: str = predict_next_tokens(
         token_ids=token_ids,
         tokenizer=tokenizer,
         model=model,
     )
-    input_contexts: List[str] = tokenizer.decode(token_ids)
-    generated_texts: str = predictions[len(input_contexts) :].strip()
+    input_contexts: str = tokenizer.decode(token_ids)
+    generated_texts: str = text_with_predictions[len(input_contexts) :].strip()
     predicted_words: List[str] = basic_tokenizer.tokenize(generated_texts)
     predicted_word: str = (
         "" if len(predicted_words) == 0 else predicted_words[0]
