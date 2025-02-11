@@ -3,20 +3,20 @@ import os
 from typing import *
 
 import lightning as L
-from datasets import Dataset
+from datasets import Dataset as HuggingFaceDataset
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
-from dataset.collate import ReLLamaDataCollator
-from dataset.datasets import (
+from src.dataset.collate import ReLLamaDataCollator
+from src.dataset.datasets import (
     BaseDataset,
     CurationDataset,
     LambadaDataset,
     PintsAIDataset,
     WikiTextDataset,
 )
-from tokenizer import ReLlamaTokenizer
-from utils import log_if_rank_zero
+from src.tokenizer import ReLlamaTokenizer
+from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLLamaDataModule")
 
@@ -25,7 +25,7 @@ class ReLLamaDataModule(L.LightningDataModule):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
-        self.train_dataset: Dataset | None = None
+        self.train_dataset: HuggingFaceDataset | None = None
         self.dataset_size: int = 0
         self.max_length: int = cfg.model.max_length
         self.batch_size: int = cfg.training.per_device_train_batch_size

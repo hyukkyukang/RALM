@@ -1,7 +1,7 @@
 from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 
-from dataset.datasets.base_dataset import BaseDataset
+from src.dataset.datasets.base_dataset import BaseDataset
 
 
 class WikiTextDataset(BaseDataset):
