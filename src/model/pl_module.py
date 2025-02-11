@@ -17,12 +17,22 @@ from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLLamaLightningModule")
 
-def get_compile_decorator(use_compile: bool = True, fullgraph: bool = False, mode: str = "default"):
+
+def get_compile_decorator(
+    use_compile: bool = True, fullgraph: bool = False, mode: str = "default"
+):
     """Returns torch.compile decorator if GPU is capable and use_compile is True, otherwise returns a no-op decorator"""
-    if use_compile and torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7:
-        log_if_rank_zero(logger, f"Compiling the module with torch compile in {mode} mode...")
+    if (
+        use_compile
+        and torch.cuda.is_available()
+        and torch.cuda.get_device_capability()[0] >= 7
+    ):
+        log_if_rank_zero(
+            logger, f"Compiling the module with torch compile in {mode} mode..."
+        )
         return torch.compile(fullgraph=fullgraph, mode=mode)
     return lambda x: x  # no-op decorator
+
 
 class ReLLamaLightningModule(L.LightningModule):
     def __init__(
@@ -42,7 +52,9 @@ class ReLLamaLightningModule(L.LightningModule):
         )
         # Store all arguments within the model checkpoint.
         self.save_hyperparameters(cfg)
-        self.compiled_step = get_compile_decorator(cfg.training.use_torch_compile, fullgraph=False)(self._compiled_step)
+        self.compiled_step = get_compile_decorator(
+            cfg.training.use_torch_compile, fullgraph=False
+        )(self._compiled_step)
 
     def initialize_language_model(
         self, cfg: DictConfig, tokenizer: Optional[ReLlamaTokenizer] = None
@@ -79,7 +91,9 @@ class ReLLamaLightningModule(L.LightningModule):
                     logger,
                     "Compiling the model with torch compile...",
                 )
-                causal_model = torch.compile(causal_model, dynamic=True, mode="max-autotune")
+                causal_model = torch.compile(
+                    causal_model, dynamic=True, mode="max-autotune"
+                )
             else:
                 log_if_rank_zero(
                     logger,
@@ -115,7 +129,7 @@ class ReLLamaLightningModule(L.LightningModule):
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
-        
+
         self.compiled_step(batch["input_ids"], batch["attention_mask"], batch["labels"])
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
@@ -222,7 +236,8 @@ class ReLLamaLightningModule(L.LightningModule):
         # Backward
         self.manual_backward(loss)
         return None
-    
+
+
 # Define a TorchScript-compatible function for the learning rate schedule
 @torch.jit.script
 def lr_lambda_cosine_decay(
@@ -232,9 +247,9 @@ def lr_lambda_cosine_decay(
     Computes learning rate scaling factor for warmup and cosine decay.
 
     Args:
-        it (int): Current training step.
+        it (int): Current optimizer step.
         warmup_iters (int): Number of warmup steps.
-        total_iters (int): Total training steps.
+        total_iters (int): Total optimizer steps.
         min_lr (float): Minimum learning rate.
         max_lr (float): Maximum learning rate.
 
@@ -260,10 +275,11 @@ def lr_lambda_linear_decay(
     Computes learning rate scaling factor for warmup and linear decay to zero.
 
     Args:
-        it (int): Current training step.
+        it (int): Current optimizer step.
         warmup_iters (int): Number of warmup steps.
-        total_iters (int): Total training steps.
+        total_iters (int): Total optimizer steps.
         max_lr (float): Maximum learning rate.
+        min_lr (float): Minimum learning rate.
 
     Returns:
         float: The learning rate multiplier.
@@ -271,7 +287,10 @@ def lr_lambda_linear_decay(
     if it < warmup_iters:
         return float(it) / float(warmup_iters)  # Linear warmup
     elif it >= total_iters:
-        return min_lr
+        return min_lr / max_lr
     else:
-        # Linear decay to min_lr
-        return min_lr + (max_lr - min_lr) * (total_iters - it) / total_iters
+        # Linear decay to min_lr, normalized by max_lr for use with LambdaLR
+        return (
+            min_lr
+            + (max_lr - min_lr) * (total_iters - it) / (total_iters - warmup_iters)
+        ) / max_lr
