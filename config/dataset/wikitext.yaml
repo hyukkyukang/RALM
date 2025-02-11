@@ -1,3 +1,4 @@
 name: wikitext
 huggingface_dataset_name: Salesforce/wikitext
 dir_name: data
+truncate_ok: False

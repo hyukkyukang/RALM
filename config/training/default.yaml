@@ -1,8 +1,7 @@
 # Optimization parameters
 precision: 16-mixed
 gradient_accumulation_steps: 10
-per_device_train_batch_size: 2
-per_device_eval_batch_size: 60
+per_device_batch_size: 2
 max_epochs: 1
 
 # Logging and checkpointing
@@ -11,5 +10,5 @@ checkpoint_save_steps: 10000
 resume_ckpt_path: Null
 
 # Dataloader
-train_num_workers: 8
+num_workers: 8
 use_torch_compile: True

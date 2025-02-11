@@ -1,3 +1,4 @@
 name: curation
 huggingface_dataset_name: d0rj/curation-corpus
 dir_name: data
+truncate_ok: False

@@ -1,15 +1,14 @@
 from typing import *
 
 import torch
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import GenerationMixin
-from transformers.models.llama.modeling_llama import (
-    LlamaModel,
-    LlamaPreTrainedModel,
-    KwargsForCausalLM,
-)
+from transformers.models.llama.modeling_llama import (KwargsForCausalLM,
+                                                      LlamaModel,
+                                                      LlamaPreTrainedModel)
+
 from src.model.rellama.model import ReLlama
-from transformers.cache_utils import Cache
 
 
 class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):

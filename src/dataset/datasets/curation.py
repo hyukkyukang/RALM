@@ -5,8 +5,8 @@ from src.dataset.datasets.base_dataset import BaseDataset
 
 
 class CurationDataset(BaseDataset):
-    def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
+    def __init__(self, cfg: DictConfig, tokenized_data: Dataset | None = None):
+        super().__init__(cfg, tokenized_data)
 
     def _load_dataset(self) -> Dataset:
         return load_dataset(

@@ -28,7 +28,6 @@ class ReLLamaDataModule(L.LightningDataModule):
         self.train_dataset: HuggingFaceDataset | None = None
         self.dataset_size: int = 0
         self.max_length: int = cfg.model.max_length
-        self.batch_size: int = cfg.training.per_device_train_batch_size
         self.tokenizer: ReLlamaTokenizer = ReLlamaTokenizer.from_pretrained(
             cfg.model.base_name
         )
@@ -75,14 +74,14 @@ class ReLLamaDataModule(L.LightningDataModule):
                     logger,
                     f"Downloading {self.cfg.dataset.name} data ({self.cfg.dataset.split} split) into {self.hf_cache_dir_path}",
                 )
-                dataset = self.dataset_class(cfg=self.cfg)
+                dataset: BaseDataset = self.dataset_class(cfg=self.cfg)
 
                 # Tokenize the dataset and save as a cache file
                 log_if_rank_zero(logger, "Tokenizing dataset...")
                 dataset.tokenize_data(
                     self.tokenize_function,
                     batched=True,
-                    remove_columns=["text", "source_id", "source"],
+                    remove_columns=self.cfg.dataset.remove_columns,
                 )
 
                 # Check if the directory exists
@@ -105,7 +104,7 @@ class ReLLamaDataModule(L.LightningDataModule):
             else:
                 # Load the cached dataset
                 train_dataset: BaseDataset = self.dataset_class.load_from_disk(
-                    self.tokenized_dataset_path
+                    cfg=self.cfg, path=self.tokenized_dataset_path
                 )
                 self.dataset_size = len(train_dataset)
         except Exception as e:
@@ -127,7 +126,7 @@ class ReLLamaDataModule(L.LightningDataModule):
 
             # Load the cached tokenized dataset instead of the raw dataset
             self.train_dataset: BaseDataset = self.dataset_class.load_from_disk(
-                self.tokenized_dataset_path
+                cfg=self.cfg, path=self.tokenized_dataset_path
             )
             log_if_rank_zero(
                 logger,
@@ -143,22 +142,37 @@ class ReLLamaDataModule(L.LightningDataModule):
     def tokenize_function(self, examples: Dict) -> Dict:
         # Handle potential None or empty strings
         texts = [str(text) if text is not None else "" for text in examples["text"]]
-        return self.tokenizer(
-            texts,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
+        if self.cfg.dataset.truncate_ok:
+            return self.tokenizer(
+                texts,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt",
+            )
+        else:
+            return self.tokenizer(texts)
 
     def train_dataloader(self) -> DataLoader:
         data_collator = ReLLamaDataCollator(tokenizer=self.tokenizer, mlm=False)
         return DataLoader(
             self.train_dataset,
-            batch_size=self.batch_size,
-            num_workers=self.cfg.training.train_num_workers,
+            batch_size=self.cfg.training.per_device_batch_size,
+            num_workers=self.cfg.training.num_workers,
             collate_fn=data_collator,
             shuffle=True,
             drop_last=True,
+            pin_memory=True,
+        )
+
+    def test_dataloader(self) -> DataLoader:
+        data_collator = ReLLamaDataCollator(tokenizer=self.tokenizer, mlm=False)
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.cfg.testing.per_device_batch_size,
+            num_workers=self.cfg.testing.num_workers,
+            collate_fn=data_collator,
+            shuffle=False,
+            drop_last=False,
             pin_memory=True,
         )

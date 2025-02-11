@@ -65,5 +65,5 @@ class BaseDataset:
         self.raw_data.save_to_disk(path)
 
     @classmethod
-    def load_from_disk(cls, path: str) -> "BaseDataset":
-        return cls(cfg=cls.cfg, tokenized_data=Dataset.load_from_disk(path))
+    def load_from_disk(cls, cfg: DictConfig, path: str) -> "BaseDataset":
+        return cls(cfg=cfg, tokenized_data=Dataset.load_from_disk(path))

@@ -7,12 +7,12 @@ _global:
 defaults:
     - _self_
     - model: rellama
-    - dataset: default
-    - training: default
+    - dataset: pints_ai
     - eval: null
     - optimizer: adamw
     - lr_scheduler: linear_decay
-
+    - training: default
+    - testing: default
 hydra:
   output_subdir: null
   run:

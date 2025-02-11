@@ -155,7 +155,8 @@ class ReLLamaLightningModule(L.LightningModule):
 
         return None
 
-    # Modify configure_optimizers to use the JIT-compiled function
+    def test_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
+        raise NotImplementedError("Test step not implemented")
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
         # Choose optimizer based on config

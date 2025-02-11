@@ -1,0 +1,9 @@
+name: pints-ai
+huggingface_dataset_name: pints-ai/Expository-Prose-V1
+split: train
+dir_name: data
+remove_columns:
+  - text
+  - source_id
+  - source
+truncate_ok: True # This dataset is for training, so we enable truncation.
