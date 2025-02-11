@@ -1,0 +1,4 @@
+name: lambada
+huggingface_dataset_name: cimec/lambada
+split: test
+dir_name: data

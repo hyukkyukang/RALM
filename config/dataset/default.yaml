@@ -1,3 +1,4 @@
-name: pints-ai/Expository-Prose-V1
+name: pints-ai
+huggingface_dataset_name: pints-ai/Expository-Prose-V1
 split: train
 dir_name: data

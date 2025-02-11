@@ -3,14 +3,20 @@ import os
 from typing import *
 
 import lightning as L
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
-from src.dataset.collate import ReLLamaDataCollator
-from src.tokenizer import ReLlamaTokenizer
-from src.utils import log_if_rank_zero
+from dataset.collate import ReLLamaDataCollator
+from dataset.datasets import (
+    BaseDataset,
+    CurationDataset,
+    LambadaDataset,
+    PintsAIDataset,
+    WikiTextDataset,
+)
+from tokenizer import ReLlamaTokenizer
+from utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLLamaDataModule")
 
@@ -35,6 +41,18 @@ class ReLLamaDataModule(L.LightningDataModule):
         return len(self.train_dataset)
 
     @property
+    def dataset_class(self) -> Type[BaseDataset]:
+        if self.cfg.dataset.name == "pints-ai":
+            return PintsAIDataset
+        elif self.cfg.dataset.name == "lambada":
+            return LambadaDataset
+        elif self.cfg.dataset.name == "wikitext":
+            return WikiTextDataset
+        elif self.cfg.dataset.name == "curation":
+            return CurationDataset
+        raise ValueError(f"Dataset {self.cfg.dataset.name} not supported")
+
+    @property
     def hf_cache_dir_path(self) -> str:
         return os.path.join(
             self.cfg._global.root_dir_path,
@@ -57,29 +75,15 @@ class ReLLamaDataModule(L.LightningDataModule):
                     logger,
                     f"Downloading {self.cfg.dataset.name} data ({self.cfg.dataset.split} split) into {self.hf_cache_dir_path}",
                 )
-                raw_dataset = load_dataset(
-                    self.cfg.dataset.name,
-                    split=None,
-                    cache_dir=self.hf_cache_dir_path,
-                    num_proc=8,
-                )
-
-                # Validate that the dataset has the required columns
-                if "text" not in raw_dataset[self.cfg.dataset.split].column_names:
-                    raise ValueError(
-                        f"Dataset {self.cfg.dataset.name} does not contain a 'text' column"
-                    )
+                dataset = self.dataset_class(cfg=self.cfg)
 
                 # Tokenize the dataset and save as a cache file
                 log_if_rank_zero(logger, "Tokenizing dataset...")
-                processed_dataset = raw_dataset.map(
+                dataset.tokenize_data(
                     self.tokenize_function,
                     batched=True,
                     remove_columns=["text", "source_id", "source"],
                 )
-
-                # Select the specific split before accessing input_ids
-                processed_dataset = processed_dataset[self.cfg.dataset.split]
 
                 # Check if the directory exists
                 if not os.path.exists(self.tokenized_dataset_path):
@@ -92,24 +96,17 @@ class ReLLamaDataModule(L.LightningDataModule):
                 log_if_rank_zero(
                     logger, f"Saving tokenized dataset to {self.tokenized_dataset_path}"
                 )
-                processed_dataset.save_to_disk(self.tokenized_dataset_path)
+                dataset.save_to_disk(self.tokenized_dataset_path)
 
-                # Print the number of tokens in the dataset
-                total_tokens = sum(
-                    len(x)
-                    for x in tqdm(
-                        processed_dataset["input_ids"],
-                        desc="Counting tokens",
-                        total=len(processed_dataset),
-                    )
-                )
                 log_if_rank_zero(
-                    logger, f"Number of tokens in the dataset: {total_tokens}"
+                    logger, f"Number of tokens in the dataset: {dataset.total_tokens}"
                 )
-                self.dataset_size = len(processed_dataset)
+                self.dataset_size = len(dataset)
             else:
                 # Load the cached dataset
-                train_dataset = Dataset.load_from_disk(self.tokenized_dataset_path)
+                train_dataset: BaseDataset = self.dataset_class.load_from_disk(
+                    self.tokenized_dataset_path
+                )
                 self.dataset_size = len(train_dataset)
         except Exception as e:
             logger.error(f"Error preparing dataset: {str(e)}")
@@ -129,7 +126,9 @@ class ReLLamaDataModule(L.LightningDataModule):
                 )
 
             # Load the cached tokenized dataset instead of the raw dataset
-            self.train_dataset = Dataset.load_from_disk(self.tokenized_dataset_path)
+            self.train_dataset: BaseDataset = self.dataset_class.load_from_disk(
+                self.tokenized_dataset_path
+            )
             log_if_rank_zero(
                 logger,
                 f"Loaded cached tokenized dataset with {len(self.train_dataset)} examples",

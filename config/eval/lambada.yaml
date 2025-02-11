@@ -1,3 +1,0 @@
-name: lambada
-dataset_name: cimec/lambada
-batch_size: 60

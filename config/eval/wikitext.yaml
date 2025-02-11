@@ -1,3 +1,0 @@
-name: wikitext
-dataset_name: Salesforce/wikitext
-batch_size: 60

@@ -1,12 +1,12 @@
 # Optimization parameters
 precision: 16-mixed
-gradient_accumulation_steps: 12
-per_device_train_batch_size: 18
+gradient_accumulation_steps: 10
+per_device_train_batch_size: 2
 per_device_eval_batch_size: 60
 max_epochs: 1
 
 # Logging and checkpointing
-logging_steps: 500
+logging_steps: 100
 checkpoint_save_steps: 10000
 resume_ckpt_path: Null
 
