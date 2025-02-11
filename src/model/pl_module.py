@@ -9,10 +9,11 @@ from lion_pytorch import Lion
 from omegaconf import DictConfig
 from transformers.optimization import Adafactor
 
+from src.evaluation.next_word_prediction import evaluate_next_word_prediction
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
 from src.model.utils import get_llama_config, initialize_weights
-from src.tokenizer import ReLlamaTokenizer
+from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLLamaLightningModule")
@@ -47,37 +48,38 @@ class ReLLamaLightningModule(L.LightningModule):
         self.cfg = cfg
         self.total_optimization_steps = total_optimization_steps
         self.bpb_term = math.log2(math.e) / 4  # 4 is bytes_per_token
-        self.model: transformers.LlamaForCausalLM = self.initialize_language_model(
-            cfg=cfg, tokenizer=tokenizer
-        )
+        self.tokenizer = tokenizer
+        self.model: transformers.LlamaForCausalLM = self.initialize_language_model()
         # Store all arguments within the model checkpoint.
         self.save_hyperparameters(cfg)
+        # For efficient training
         self.compiled_step = get_compile_decorator(
-            cfg.training.use_torch_compile, fullgraph=False
+            use_compile=cfg.training.get("use_torch_compile", cfg.get("use_torch_compile", False)),
+            fullgraph=False,
         )(self._compiled_step)
+        # For evaluation
+        self.test_step_outputs: List[float] = []
 
-    def initialize_language_model(
-        self, cfg: DictConfig, tokenizer: Optional[ReLlamaTokenizer] = None
-    ) -> transformers.LlamaForCausalLM:
+    def initialize_language_model(self) -> transformers.LlamaForCausalLM:
         # Get the tokenizer
-        if tokenizer is None:
-            tokenizer = ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
+        if self.tokenizer is None:
+            self.tokenizer = ReLlamaTokenizer.from_pretrained(self.cfg.model.base_name)
 
-        llama_config: transformers.LlamaConfig = get_llama_config(cfg, tokenizer)
+        llama_config: transformers.LlamaConfig = get_llama_config(self.cfg, self.tokenizer)
         llama_config.attn_implementation = "flash_attention_2"
 
         # Initialize the model
-        if cfg.model.name == "llama":
+        if self.cfg.model.name == "llama":
             model = transformers.LlamaModel(config=llama_config)
             causal_model = transformers.LlamaForCausalLM(config=llama_config)
-        elif cfg.model.name == "rellama":
+        elif self.cfg.model.name == "rellama":
             model = ReLlama(llama_config)
             causal_model = ReLlamaForCausalLM(config=llama_config, model=model)
         else:
-            raise ValueError(f"Model name {cfg.model.name} not supported")
+            raise ValueError(f"Model name {self.cfg.model.name} not supported")
 
         # Initialize model weights if not resuming from checkpoint
-        if cfg.training.resume_ckpt_path is None:
+        if self.cfg.training.resume_ckpt_path is None:
             log_if_rank_zero(
                 logger,
                 "Applying xavier uniform initialization to model weights for pretraining from scratch",
@@ -85,7 +87,7 @@ class ReLLamaLightningModule(L.LightningModule):
             causal_model.apply(initialize_weights)
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
-        if cfg.training.use_torch_compile:
+        if self.cfg.training.get("use_torch_compile", self.cfg.get("use_torch_compile", False)):
             if torch.cuda.get_device_capability()[0] >= 7:
                 log_if_rank_zero(
                     logger,
@@ -101,7 +103,7 @@ class ReLLamaLightningModule(L.LightningModule):
                 )
 
         # Enable gradient checkpointing if specified in config
-        if cfg.training.get("gradient_checkpointing", False):
+        if self.cfg.training.get("gradient_checkpointing", False):
             log_if_rank_zero(
                 logger,
                 "Enabling gradient checkpointing...",
@@ -156,7 +158,27 @@ class ReLLamaLightningModule(L.LightningModule):
         return None
 
     def test_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        raise NotImplementedError("Test step not implemented")
+        bsize = len(batch["input_ids"])
+        if self.cfg.testing.name == "last_word_prediction":
+            for b_idx in range(bsize):
+                correct = evaluate_next_word_prediction(
+                    token_ids=batch["input_ids"][b_idx],
+                    last_word=batch["last_word"][b_idx],
+                    tokenizer=self.tokenizer,
+                    model=self.model,
+                )
+                self.test_step_outputs.append(correct)
+        else:
+            raise ValueError(f"Test step {self.cfg.testing.name} not implemented")
+        return None
+
+    def on_test_epoch_end(self) -> None:
+        # Accumulate the accuracy over all the test steps and multi-processes
+        gathered_accuracies = self.all_gather(self.test_step_outputs)
+        # Calculate the accuracy
+        accuracy = sum(gathered_accuracies) / len(gathered_accuracies)
+        self.log("accuracy", accuracy)
+        return {'accuracy': accuracy}
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
         # Choose optimizer based on config

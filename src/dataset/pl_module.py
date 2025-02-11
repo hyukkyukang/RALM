@@ -1,5 +1,6 @@
 import logging
 import os
+from functools import cached_property
 from typing import *
 
 import lightning as L
@@ -7,15 +8,18 @@ from datasets import Dataset as HuggingFaceDataset
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
-from src.dataset.collate import ReLLamaDataCollator
 from src.dataset.datasets import (
     BaseDataset,
+    CurationDataCollator,
     CurationDataset,
+    LambadaDataCollator,
     LambadaDataset,
+    PintsAIDataCollator,
     PintsAIDataset,
+    WikiTextDataCollator,
     WikiTextDataset,
 )
-from src.tokenizer import ReLlamaTokenizer
+from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLLamaDataModule")
@@ -38,6 +42,19 @@ class ReLLamaDataModule(L.LightningDataModule):
             return self.dataset_size
         assert len(self.train_dataset) == self.dataset_size, "Dataset size mismatch"
         return len(self.train_dataset)
+    
+    @property
+    def tokenized_dataset_path(self) -> str:
+        return os.path.join(self.hf_cache_dir_path, "tokenized")
+
+    @property
+    def hf_cache_dir_path(self) -> str:
+        return os.path.join(
+            self.cfg._global.root_dir_path,
+            self.cfg.dataset.dir_name,
+            "huggingface",
+            self.cfg.dataset.name,
+        )
 
     @property
     def dataset_class(self) -> Type[BaseDataset]:
@@ -51,18 +68,17 @@ class ReLLamaDataModule(L.LightningDataModule):
             return CurationDataset
         raise ValueError(f"Dataset {self.cfg.dataset.name} not supported")
 
-    @property
-    def hf_cache_dir_path(self) -> str:
-        return os.path.join(
-            self.cfg._global.root_dir_path,
-            self.cfg.dataset.dir_name,
-            "huggingface",
-            self.cfg.dataset.name,
-        )
-
-    @property
-    def tokenized_dataset_path(self) -> str:
-        return os.path.join(self.hf_cache_dir_path, "tokenized")
+    @cached_property
+    def data_collator(self) -> Callable:
+        if self.cfg.dataset.name == "pints-ai":
+            return PintsAIDataCollator(tokenizer=self.tokenizer, mlm=False)
+        elif self.cfg.dataset.name == "lambada":
+            return LambadaDataCollator(tokenizer=self.tokenizer, mlm=False)
+        elif self.cfg.dataset.name == "wikitext":
+            return WikiTextDataCollator(tokenizer=self.tokenizer, mlm=False)
+        elif self.cfg.dataset.name == "curation":
+            return CurationDataCollator(tokenizer=self.tokenizer, mlm=False)
+        raise ValueError(f"Data collator for dataset {self.cfg.dataset.name} not supported")
 
     def prepare_data(self) -> None:
         """Downloads the dataset if not already present.
@@ -154,24 +170,22 @@ class ReLLamaDataModule(L.LightningDataModule):
             return self.tokenizer(texts)
 
     def train_dataloader(self) -> DataLoader:
-        data_collator = ReLLamaDataCollator(tokenizer=self.tokenizer, mlm=False)
         return DataLoader(
             self.train_dataset,
             batch_size=self.cfg.training.per_device_batch_size,
             num_workers=self.cfg.training.num_workers,
-            collate_fn=data_collator,
+            collate_fn=self.data_collator,
             shuffle=True,
             drop_last=True,
             pin_memory=True,
         )
 
     def test_dataloader(self) -> DataLoader:
-        data_collator = ReLLamaDataCollator(tokenizer=self.tokenizer, mlm=False)
         return DataLoader(
             self.train_dataset,
             batch_size=self.cfg.testing.per_device_batch_size,
             num_workers=self.cfg.testing.num_workers,
-            collate_fn=data_collator,
+            collate_fn=self.data_collator,
             shuffle=False,
             drop_last=False,
             pin_memory=True,

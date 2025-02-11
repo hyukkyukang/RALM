@@ -13,19 +13,22 @@ from omegaconf import DictConfig
 
 from src.dataset import ReLLamaDataModule
 from src.model import ReLLamaLightningModule
+from src.utils import add_config, overwrite_config
 
 logger = logging.getLogger("Evaluation")
 
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
+    # Make use_torch_compile to False
+    cfg.use_torch_compile = False
+
     # Load trained model
     assert cfg.ckpt_path, "Please provide the path to the checkpoint"
     model = ReLLamaLightningModule.load_from_checkpoint(cfg.ckpt_path)
 
     # Load data module and model
     data_module = ReLLamaDataModule(cfg=cfg)
-    data_module.prepare_data()
 
     # Create trainer
     trainer = L.Trainer(
@@ -36,6 +39,10 @@ def main(cfg: DictConfig) -> None:
             timeout=timedelta(hours=5), static_graph=True, gradient_as_bucket_view=True
         ),
     )
+
+    # Set configs
+    add_config(model.cfg, "testing", DictConfig({"name": "last_word_prediction", "per_device_batch_size": 1}))
+    overwrite_config(cfg.testing, model.cfg.testing)
 
     # Evaluate
     trainer.test(model, datamodule=data_module)

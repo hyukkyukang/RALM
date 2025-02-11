@@ -1,3 +1,5 @@
+from typing import *
+
 from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 
@@ -15,3 +17,11 @@ class WikiTextDataset(BaseDataset):
             cache_dir=self.hf_cache_dir_path,
             num_proc=8,
         )
+
+
+class WikiTextDataCollator:
+    def __init__(self) -> None:
+        pass
+
+    def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
+        pass

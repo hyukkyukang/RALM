@@ -1,2 +1,0 @@
-num_workers: 4
-per_device_batch_size: 10

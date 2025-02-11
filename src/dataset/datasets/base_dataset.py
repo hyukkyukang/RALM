@@ -62,7 +62,7 @@ class BaseDataset:
         return None
 
     def save_to_disk(self, path: str) -> None:
-        self.raw_data.save_to_disk(path)
+        self.tokenized_data.save_to_disk(path)
 
     @classmethod
     def load_from_disk(cls, cfg: DictConfig, path: str) -> "BaseDataset":

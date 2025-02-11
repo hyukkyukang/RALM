@@ -1,3 +1,4 @@
+use_torch_compile: True
 _global:
     seed: 10
     tag: "default"
@@ -8,11 +9,10 @@ defaults:
     - _self_
     - model: rellama
     - dataset: pints_ai
-    - eval: null
     - optimizer: adamw
     - lr_scheduler: linear_decay
     - training: default
-    - testing: default
+    - testing: last_word_prediction
 hydra:
   output_subdir: null
   run:

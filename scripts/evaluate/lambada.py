@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BasicTokenizer
 
 from scripts.evaluate.utils import normalize_quotes
 from src.model import ReLLamaLightningModule
-from src.tokenizer import ReLlamaTokenizer
+from src.tokenization import ReLlamaTokenizer
 from src.utils import check_argument
 from scripts.evaluate.utils import STOPWORDS_FROM_GPT2
 
@@ -59,7 +59,7 @@ def split_text_into_context_and_last_word(
     return {"context": line[:-length_of_word].strip(), "last_word": toks[-1]}
 
 
-def predict(
+def predict_next_tokens(
     token_ids: List[List[int]],
     tokenizer: AutoTokenizer,
     model: AutoModelForCausalLM,
@@ -154,7 +154,7 @@ def main(cfg: DictConfig) -> None:
     with torch.no_grad():
         for idx in tqdm.tqdm(range(len(tokenized_dataset)), desc="Evaluating"):
             # Get the predicted completions
-            predictions: str = predict(
+            predictions: str = predict_next_tokens(
                 token_ids=tokenized_dataset["input_ids"][idx],
                 tokenizer=tokenizer,
                 model=model,

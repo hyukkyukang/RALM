@@ -3,7 +3,7 @@ from typing import *
 
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-from src.tokenizer.utils import call_autotokenizer_with_hf_token
+from src.tokenization.utils import call_autotokenizer_with_hf_token
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("ReLlamaTokenizer")

@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.model import ReLLamaLightningModule
-from src.tokenizer import ReLlamaTokenizer
+from src.tokenization import ReLlamaTokenizer
 from src.utils import check_argument
 
 logger = logging.getLogger("EvaluateLambada")

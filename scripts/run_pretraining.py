@@ -125,7 +125,7 @@ def main(cfg: DictConfig) -> None:
     # For the main process with rank 0 only
     if (
         torch.distributed.get_rank() == 0
-        and cfg.training.use_torch_compile
+        and cfg.use_torch_compile
         and torch.cuda.get_device_capability()[0] >= 7
     ):
         last_checkpoint_path = os.path.join(
