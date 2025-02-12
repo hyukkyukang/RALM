@@ -11,7 +11,7 @@ def remove_prefix(text, substring: str) -> str:
 
 def repair_checkpoint(path):
     # Load the checkpoint
-    ckpt = torch.load(path, weights_only=False)
+    ckpt = torch.load(path, weights_only=False, map_location="cpu")
 
     # Repair the checkpoint
     in_state_dict = ckpt[MODEL_STATE_DICT_KEY]
@@ -37,6 +37,6 @@ def repair_checkpoint(path):
 
 
 if __name__ == "__main__":
-    checkpoint_path = "/root/RETRO/runs/lion/lion.ckpt"
+    checkpoint_path = "/root/RETRO/runs/adafactor/adafactor.ckpt"
     repair_checkpoint(checkpoint_path)
     print("Done!")
