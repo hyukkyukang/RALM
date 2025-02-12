@@ -18,7 +18,7 @@ class PintsAIDataset(BaseDataset):
         super().__init__(cfg, tokenizer, tokenized_data)
 
     def _load_dataset(self) -> Dataset:
-        self.raw_data = load_dataset(
+        return load_dataset(
             self.cfg.dataset.huggingface_dataset_name,
             split=self.cfg.dataset.split,
             cache_dir=self.hf_cache_dir_path,

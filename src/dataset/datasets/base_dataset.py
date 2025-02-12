@@ -44,7 +44,7 @@ class BaseDataset:
     @property
     def tokenized_cache_path(self) -> str:
         # Get tokenizer name from the tokenizer class
-        tokenizer_name = self.tokenizer.__class__.__name__.lower()
+        tokenizer_name = self.tokenizer.name_or_path.replace("/", "_")
         return os.path.join(self.hf_cache_dir_path, f"{tokenizer_name}_tokenized")
 
     @property
@@ -77,6 +77,8 @@ class BaseDataset:
         batched: bool = True,
         remove_columns: List[str] = [],
     ) -> None:
+        # TODO: Need is really slow (got slower than before). I don't think multiple processes are being used.
+        assert self.raw_data is not None, "Raw data is not loaded"
         if self.tokenized_data is None:
             # Check if remove_columns are present in the raw_data, if not remove them from the list
             remove_columns = [
