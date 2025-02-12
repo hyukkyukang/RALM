@@ -1,1 +1,1 @@
-from .pl_module import ReLLamaLightningModule
+from .pl_module import LightningModule

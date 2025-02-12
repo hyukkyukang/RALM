@@ -11,8 +11,8 @@ import lightning as L
 import torch
 from omegaconf import DictConfig
 
-from src.dataset import ReLLamaDataModule
-from src.model import ReLLamaLightningModule
+from src.dataset import DataModule
+from src.model import LightningModule
 from src.utils import add_config, log_if_rank_zero, overwrite_config
 
 logger = logging.getLogger("Evaluation")
@@ -25,14 +25,19 @@ def main(cfg: DictConfig) -> None:
     cfg.training.precision = 32
 
     # Load trained model
-    assert cfg.ckpt_path, "Please provide the path to the checkpoint"
-    model = ReLLamaLightningModule.load_from_checkpoint(
-        cfg.ckpt_path, map_location="cpu", training=cfg.training
-    )
-    model.eval()
+    if cfg.model.name == "rellama":
+        assert cfg.ckpt_path, "Please provide the path to the checkpoint"
+        lightning_module = LightningModule.load_from_checkpoint(
+            cfg.ckpt_path, map_location="cpu", training=cfg.training
+        )
+    elif cfg.model.name == "gpt":
+        lightning_module = LightningModule(cfg=cfg).to("cpu")
+    else:
+        raise ValueError(f"Model name {cfg.model.name} not supported")
+    lightning_module.eval()
 
     # Load data module and model
-    data_module = ReLLamaDataModule(cfg=cfg)
+    data_module = DataModule(cfg=cfg)
 
     # Create trainer
     trainer = L.Trainer(
@@ -45,11 +50,12 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Set configs
-    add_config(model.cfg, "testing", DictConfig({}))
-    overwrite_config(cfg.testing, model.cfg.testing)
+    if "testing" not in lightning_module.cfg:
+        add_config(lightning_module.cfg, "testing", DictConfig({}))
+    overwrite_config(cfg.testing, lightning_module.cfg.testing)
 
     # Evaluate
-    trainer.test(model, datamodule=data_module)
+    trainer.test(lightning_module, datamodule=data_module)
     log_if_rank_zero(logger, "Evaluation completed")
     return None
 

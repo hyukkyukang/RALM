@@ -7,16 +7,17 @@ import torch
 import transformers
 from lion_pytorch import Lion
 from omegaconf import DictConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
 from src.evaluation.next_word_prediction import evaluate_next_word_prediction
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import get_llama_config, initialize_weights
+from src.model.utils import initialize_weights
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
-logger = logging.getLogger("ReLLamaLightningModule")
+logger = logging.getLogger("LightningModule")
 
 
 def get_compile_decorator(
@@ -35,7 +36,7 @@ def get_compile_decorator(
     return lambda x: x  # no-op decorator
 
 
-class ReLLamaLightningModule(L.LightningModule):
+class LightningModule(L.LightningModule):
     def __init__(
         self,
         cfg: DictConfig,
@@ -48,7 +49,9 @@ class ReLLamaLightningModule(L.LightningModule):
         self.cfg = cfg
         self.total_optimization_steps = total_optimization_steps
         self.bpb_term = math.log2(math.e) / 4  # 4 is bytes_per_token
-        self.tokenizer = tokenizer
+        self.tokenizer: Union[ReLlamaTokenizer, AutoTokenizer] = (
+            self.initialize_tokenizer() if tokenizer is None else tokenizer
+        )
         self.model: transformers.LlamaForCausalLM = self.initialize_language_model()
         # Store all arguments within the model checkpoint.
         self.save_hyperparameters(cfg)
@@ -62,33 +65,26 @@ class ReLLamaLightningModule(L.LightningModule):
         # For evaluation
         self.test_step_outputs: List[float] = []
 
+    def initialize_tokenizer(self) -> ReLlamaTokenizer:
+        if self.cfg.model.name == "rellama":
+            tokenizer = ReLlamaTokenizer.from_pretrained(self.cfg.model.base_name)
+        elif self.cfg.model.name == "gpt":
+            tokenizer = AutoTokenizer.from_pretrained(self.cfg.model.base_name)
+        else:
+            raise ValueError(f"Tokenizer name {self.cfg.model.name} not supported")
+        return tokenizer
+
     def initialize_language_model(self) -> transformers.LlamaForCausalLM:
-        # Get the tokenizer
-        if self.tokenizer is None:
-            self.tokenizer = ReLlamaTokenizer.from_pretrained(self.cfg.model.base_name)
-
-        llama_config: transformers.LlamaConfig = get_llama_config(
-            self.cfg, self.tokenizer
-        )
-        llama_config.attn_implementation = "flash_attention_2"
-
         # Initialize the model
-        if self.cfg.model.name == "llama":
-            model = transformers.LlamaModel(config=llama_config)
-            causal_model = transformers.LlamaForCausalLM(config=llama_config)
-        elif self.cfg.model.name == "rellama":
-            model = ReLlama(llama_config)
-            causal_model = ReLlamaForCausalLM(config=llama_config, model=model)
+        if self.cfg.model.name == "rellama":
+            model = ReLlama(self.cfg, self.tokenizer)
+            causal_model = ReLlamaForCausalLM(base_model=model)
+        elif self.cfg.model.name == "gpt":
+            causal_model = AutoModelForCausalLM.from_pretrained(
+                self.cfg.model.base_name
+            )
         else:
             raise ValueError(f"Model name {self.cfg.model.name} not supported")
-
-        # Initialize model weights if not resuming from checkpoint
-        if self.cfg.training.resume_ckpt_path is None:
-            log_if_rank_zero(
-                logger,
-                "Applying xavier uniform initialization to model weights for pretraining from scratch",
-            )
-            causal_model.apply(initialize_weights)
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
         if self.cfg.training.get(

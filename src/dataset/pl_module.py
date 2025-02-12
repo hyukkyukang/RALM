@@ -22,10 +22,10 @@ from src.dataset.datasets import (
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
-logger = logging.getLogger("ReLLamaDataModule")
+logger = logging.getLogger("DataModule")
 
 
-class ReLLamaDataModule(L.LightningDataModule):
+class DataModule(L.LightningDataModule):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg

@@ -4,27 +4,35 @@ import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import GenerationMixin
-from transformers.models.llama.modeling_llama import (KwargsForCausalLM,
-                                                      LlamaModel,
-                                                      LlamaPreTrainedModel)
+from transformers.models.llama.modeling_llama import (
+    KwargsForCausalLM,
+    LlamaModel,
+    LlamaPreTrainedModel,
+)
 
 from src.model.rellama.model import ReLlama
+from src.model.utils import initialize_weights
 
 
 class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
 
-    def __init__(self, config, model: Union[LlamaModel, ReLlama]):
-        super().__init__(config)
-        self.model = model
-        self.vocab_size = config.vocab_size
+    def __init__(self, base_model: Union[LlamaModel, ReLlama]):
+        # Get llama config
+        super().__init__(base_model.config)
+        self.model = base_model
+        self.vocab_size = base_model.config.vocab_size
         self.lm_head = torch.nn.Linear(
-            config.hidden_size, config.vocab_size, bias=False
+            base_model.config.hidden_size, base_model.config.vocab_size, bias=False
         )
 
         # Initialize weights and apply final processing
         self.post_init()
+        self._custom_init()
+
+    def _custom_init(self):
+        self.model.apply(initialize_weights)
 
     def get_input_embeddings(self):
         return self.model.embed_tokens

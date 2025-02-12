@@ -5,6 +5,7 @@ from typing import *
 import tqdm
 from datasets import Dataset
 from omegaconf import DictConfig
+from transformers import AutoTokenizer
 
 from src.tokenization import ReLlamaTokenizer
 
@@ -13,7 +14,7 @@ class BaseDataset:
     def __init__(
         self,
         cfg: DictConfig,
-        tokenizer: ReLlamaTokenizer,
+        tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Dataset | None = None,
     ):
         self.cfg = cfg
@@ -42,7 +43,9 @@ class BaseDataset:
 
     @property
     def tokenized_cache_path(self) -> str:
-        return os.path.join(self.hf_cache_dir_path, "tokenized")
+        # Get tokenizer name from the tokenizer class
+        tokenizer_name = self.tokenizer.__class__.__name__.lower()
+        return os.path.join(self.hf_cache_dir_path, f"{tokenizer_name}_tokenized")
 
     @property
     def total_tokens(self) -> int:

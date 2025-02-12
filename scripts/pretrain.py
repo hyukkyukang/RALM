@@ -20,8 +20,8 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig
 
-from src.dataset import ReLLamaDataModule
-from src.model import ReLLamaLightningModule
+from src.dataset import DataModule
+from src.model import LightningModule
 from src.utils import add_config, log_if_rank_zero
 
 logger = logging.getLogger("PL_Trainer")
@@ -50,7 +50,7 @@ def main(cfg: DictConfig) -> None:
     L.seed_everything(cfg._global.seed, workers=True)
 
     # Initialize lightning module and call prepare_data to figure out the length of the dataset
-    data_module = ReLLamaDataModule(cfg=cfg)
+    data_module = DataModule(cfg=cfg)
     data_module.prepare_data()
 
     # Compute the total number of training steps for the learning rate scheduler
@@ -72,7 +72,7 @@ def main(cfg: DictConfig) -> None:
     log_if_rank_zero(logger, f"Total optimization steps: {total_optimization_steps}")
 
     # Initialize lightning module
-    model = ReLLamaLightningModule(
+    lightning_module = LightningModule(
         cfg=cfg,
         total_optimization_steps=total_optimization_steps,
         tokenizer=data_module.tokenizer,
@@ -117,7 +117,11 @@ def main(cfg: DictConfig) -> None:
         log_if_rank_zero(
             logger, f"Resuming from checkpoint: {cfg.training.resume_ckpt_path}"
         )
-    trainer.fit(model, datamodule=data_module, ckpt_path=cfg.training.resume_ckpt_path)
+    trainer.fit(
+        lightning_module,
+        datamodule=data_module,
+        ckpt_path=cfg.training.resume_ckpt_path,
+    )
 
     log_if_rank_zero(logger, "Training completed successfully!")
 

@@ -2,18 +2,24 @@ import logging
 from typing import *
 
 import torch
+import transformers
 from transformers.cache_utils import StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.llama.configuration_llama import LlamaConfig
-from transformers.models.llama.modeling_llama import (BaseModelOutputWithPast,
-                                                      Cache, DynamicCache,
-                                                      FlashAttentionKwargs,
-                                                      LlamaRMSNorm,
-                                                      LlamaRotaryEmbedding)
+from transformers.models.llama.modeling_llama import (
+    BaseModelOutputWithPast,
+    Cache,
+    DynamicCache,
+    FlashAttentionKwargs,
+    LlamaRMSNorm,
+    LlamaRotaryEmbedding,
+)
 
 from src.model.rellama.decoder import ReLlamaDecoderLayer
 from src.model.utils import initialize_weights
+from src.tokenization.rellama_tokenizer import ReLlamaTokenizer
+from omegaconf import DictConfig
 
 logger = logging.getLogger("ReLlama")
 
@@ -44,24 +50,26 @@ class ReLlamaPreTrainedModel(PreTrainedModel):
 
 
 class ReLlama(ReLlamaPreTrainedModel):
-    def __init__(self, config: LlamaConfig):
-        super().__init__(config)
-        self.config = config
-        self.padding_idx = config.pad_token_id
-        self.vocab_size = config.vocab_size
+    def __init__(self, cfg: DictConfig, tokenizer: Optional[ReLlamaTokenizer] = None):
+        llama_config: LlamaConfig = get_customized_llama_config(cfg, tokenizer)
+        super().__init__(llama_config)
+        self.padding_idx = llama_config.pad_token_id
+        self.vocab_size = llama_config.vocab_size
 
         self.embed_tokens = torch.nn.Embedding(
-            config.vocab_size, config.hidden_size, self.padding_idx
+            llama_config.vocab_size, llama_config.hidden_size, self.padding_idx
         )
         self.layers = torch.nn.ModuleList(
             [
-                ReLlamaDecoderLayer(config, layer_idx)
-                for layer_idx in range(config.num_hidden_layers)
+                ReLlamaDecoderLayer(llama_config, layer_idx)
+                for layer_idx in range(llama_config.num_hidden_layers)
             ]
         )
-        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = LlamaRMSNorm(
+            llama_config.hidden_size, eps=llama_config.rms_norm_eps
+        )
         # self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.rotary_emb = LlamaRotaryEmbedding(config=config)
+        self.rotary_emb = LlamaRotaryEmbedding(config=llama_config)
         self.gradient_checkpointing = False
         initialize_weights(self)
 
@@ -327,3 +335,34 @@ class ReLlama(ReLlamaPreTrainedModel):
             attentions=all_self_attns,
         )
         return output if return_dict else output.to_tuple()
+
+
+def get_customized_llama_config(
+    cfg: DictConfig, tokenizer: transformers.PreTrainedTokenizer = None
+) -> transformers.LlamaConfig:
+    # Load the tokenizer if not provided
+    if tokenizer is None:
+        tokenizer = ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
+
+    # Get the config from the pre-trained models
+    llama_config = transformers.LlamaConfig.from_pretrained(cfg.model.base_name)
+
+    # Modify the configs of the model
+    llama_config.vocab_size = len(tokenizer)
+    llama_config.pad_token_id = tokenizer.pad_token_id
+    llama_config.bos_token_id = tokenizer.bos_token_id
+    llama_config.eos_token_id = tokenizer.eos_token_id
+    llama_config.num_attention_heads = cfg.model.architecture.num_attention_heads
+    llama_config.num_key_value_heads = cfg.model.architecture.num_key_value_heads
+    llama_config.hidden_size = cfg.model.architecture.hidden_size
+    assert (
+        llama_config.hidden_size % llama_config.num_attention_heads == 0
+    ), "hidden_size must be divisible by num_attention_heads"
+    llama_config.head_dim = llama_config.hidden_size // llama_config.num_attention_heads
+    llama_config.intermediate_size = cfg.model.architecture.intermediate_size
+    llama_config.num_hidden_layers = cfg.model.architecture.layers
+    llama_config.max_position_embeddings = cfg.model.max_length
+    llama_config.torch_dtype = torch.float32
+    llama_config.attn_implementation = "flash_attention_2"
+
+    return llama_config

@@ -9,7 +9,12 @@ from src.tokenization import ReLlamaTokenizer
 
 
 class PintsAIDataset(BaseDataset):
-    def __init__(self, cfg: DictConfig, tokenizer: ReLlamaTokenizer, tokenized_data: Dataset | None = None):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        tokenizer: ReLlamaTokenizer,
+        tokenized_data: Dataset | None = None,
+    ):
         super().__init__(cfg, tokenizer, tokenized_data)
 
     def _load_dataset(self) -> Dataset:
@@ -19,18 +24,20 @@ class PintsAIDataset(BaseDataset):
             cache_dir=self.hf_cache_dir_path,
             num_proc=8,
         )
-        
+
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         texts = [str(text) if text is not None else "" for text in examples["text"]]
         # TODO: Need to remove the truncation.
         # TODO: Perform tokenization and then truncate during batching.
-        return self.tokenizer(
-            texts,
-            truncation=True,
-            padding="max_length",
-            max_length=self.cfg.model.max_length,
-            return_tensors="pt",
-        )
+        return self.tokenizer(texts)
+        # return self.tokenizer(
+        #     texts,
+        #     truncation=True,
+        #     padding="max_length",
+        #     max_length=self.cfg.model.max_length,
+        #     return_tensors="pt",
+        # )
+
 
 class PintsAIDataCollator(DataCollatorForLanguageModeling):
     """A custom data collator for ReLLama that extends the HuggingFace DataCollatorForLanguageModeling.

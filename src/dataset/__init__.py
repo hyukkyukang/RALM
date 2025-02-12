@@ -1,1 +1,1 @@
-from .pl_module import ReLLamaDataModule
+from .pl_module import DataModule
