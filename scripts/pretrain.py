@@ -94,7 +94,6 @@ def main(cfg: DictConfig) -> None:
     trainer = L.Trainer(
         deterministic=True,
         max_epochs=cfg.training.max_epochs,
-        num_sanity_val_steps=0,
         profiler="simple",
         accelerator="gpu",
         devices=torch.cuda.device_count(),
