@@ -70,29 +70,23 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         # First apply the parent class collation
         batch = super().__call__(examples)
 
-        # Decode individual tokens and count characters
-        char_counts: List[int] = []
-        avg_char_in_token: List[float] = []
-        num_valid_tokens: List[int] = []
-        for b_idx, token_ids in enumerate(batch["input_ids"]):
-            # Count characters in the full text (excluding special tokens)
-            full_text = self.tokenizer.decode(token_ids, skip_special_tokens=True)
-            char_counts.append(len(full_text))  # Count characters directly
-            num_valid_tokens.append(batch["attention_mask"][b_idx].sum().item())
-            avg_char_in_token.append(len(full_text) / num_valid_tokens[-1])
+        # Process the entire batch at once
+        full_texts = self.tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=True)
+        attention_masks = batch["attention_mask"]
+        
+        # Calculate character counts and valid tokens in one pass
+        char_counts = [len(text) for text in full_texts]
+        valid_tokens_per_seq = [mask.sum() for mask in attention_masks]
+        num_valid_tokens_total = sum(valid_tokens_per_seq)
 
-        # Compute the average number of characters per token (in the batch)
-        avg_char_in_token = sum(avg_char_in_token) / len(avg_char_in_token)
+        # Calculate average characters per token
+        avg_char_in_token = sum(chars/tokens for chars, tokens in zip(char_counts, valid_tokens_per_seq)) / len(full_texts)
 
-        # Count number of valid tokens
-
-        batch["char_counts"] = char_counts
-        batch["avg_char_in_token"] = avg_char_in_token
-        batch["num_valid_tokens"] = torch.tensor(
-            sum(num_valid_tokens),
-            dtype=torch.int64,
-            device="cpu",
-            requires_grad=False,
-        )
+        # Update batch with computed values
+        batch.update({
+            "char_counts": char_counts,
+            "avg_char_in_token": avg_char_in_token,
+            "num_valid_tokens": num_valid_tokens_total
+        })
 
         return batch
