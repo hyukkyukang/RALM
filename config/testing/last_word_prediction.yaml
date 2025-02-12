@@ -1,4 +1,4 @@
 name: last_word_prediction
 
-num_workers: 4
+num_workers: 8
 per_device_batch_size: 1

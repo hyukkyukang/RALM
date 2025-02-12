@@ -10,6 +10,7 @@ from src.evaluation.utils import STOPWORDS_FROM_GPT2
 
 logger = logging.getLogger("NextWordPrediction")
 
+
 @torch.no_grad()
 def predict_next_tokens(
     token_ids: List[int],
@@ -39,8 +40,7 @@ def predict_next_tokens(
         line_encoded_candidates = line_encoded_candidates.tolist()
         # Convert all the candidates to tokens
         candidate_tokens: List[str] = [
-            tokenizer.decode(item).lower().strip()
-            for item in line_encoded_candidates
+            tokenizer.decode(item).strip() for item in line_encoded_candidates
         ]
         # Find the first candidate which is not a stopword
         predicted_token_id = None
@@ -75,8 +75,6 @@ def evaluate_next_word_prediction(
     input_contexts: str = tokenizer.decode(token_ids)
     generated_texts: str = text_with_predictions[len(input_contexts) :].strip()
     predicted_words: List[str] = basic_tokenizer.tokenize(generated_texts)
-    predicted_word: str = (
-        "" if len(predicted_words) == 0 else predicted_words[0]
-    )
+    predicted_word: str = "" if len(predicted_words) == 0 else predicted_words[0]
     # Check if the predicted word is the same as the last word
     return predicted_word == last_word

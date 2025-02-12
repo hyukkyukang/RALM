@@ -185,7 +185,9 @@ class ReLLamaLightningModule(L.LightningModule):
         )
         # Count number of items gathered
         total_items = sum(len(item) for item in gathered_accuracies)
-        total_sum = sum(sum(item) for item in gathered_accuracies)
+        total_sum = (
+            torch.stack([item.sum() for item in gathered_accuracies]).sum().item()
+        )
         # Calculate the accuracy
         avg_accuracy = total_sum / total_items
         log_if_rank_zero(logger, f"Accuracy: {avg_accuracy} (Total: {total_items})")

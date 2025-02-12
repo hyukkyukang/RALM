@@ -23,11 +23,13 @@ def main(cfg: DictConfig) -> None:
     # Make use_torch_compile to False
     cfg.use_torch_compile = False
     cfg.training.precision = 32
+
     # Load trained model
     assert cfg.ckpt_path, "Please provide the path to the checkpoint"
     model = ReLLamaLightningModule.load_from_checkpoint(
         cfg.ckpt_path, map_location="cpu", training=cfg.training
     )
+    model.eval()
 
     # Load data module and model
     data_module = ReLLamaDataModule(cfg=cfg)
@@ -43,11 +45,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Set configs
-    add_config(
-        model.cfg,
-        "testing",
-        DictConfig({"name": "last_word_prediction", "per_device_batch_size": 1}),
-    )
+    add_config(model.cfg, "testing", DictConfig({}))
     overwrite_config(cfg.testing, model.cfg.testing)
 
     # Evaluate

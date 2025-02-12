@@ -13,27 +13,29 @@ def log_if_rank_zero(logger: logging.Logger, message: str, level: str = "info") 
 
 
 def overwrite_config(src: DictConfig, dst: DictConfig) -> DictConfig:
-    """Recursively overwrite values in the source config with values from the destination config.
+    """Recursively overwrite values in the destination config with values from the source config.
 
     Args:
-        src (DictConfig): Source configuration to be modified
-        dst (DictConfig): Destination configuration containing new values
+        src (DictConfig): Source configuration containing values to copy
+        dst (DictConfig): Destination configuration to be modified
 
     Returns:
-        DictConfig: Modified source configuration with overwritten values
+        DictConfig: Modified destination configuration with overwritten values
 
     Note:
-        Only overwrites keys that already exist in the source config.
-        For nested DictConfigs, recursively updates the nested values.
+        Copies all keys from source to destination config. For nested DictConfigs,
+        recursively updates the nested values.
     """
-    with open_dict(src):
-        for key, value in dst.items():
-            if key in src:
-                if isinstance(value, DictConfig):
-                    src[key] = overwrite_config(src[key], value)
+    with open_dict(dst):
+        for key in src:
+            if isinstance(src[key], DictConfig):
+                if key not in dst or not isinstance(dst[key], DictConfig):
+                    dst[key] = src[key]
                 else:
-                    src[key] = value
-    return src
+                    dst[key] = overwrite_config(src[key], dst[key])
+            else:
+                dst[key] = src[key]
+    return dst
 
 
 def add_config(cfg: DictConfig, key: str, value: Any) -> DictConfig:
