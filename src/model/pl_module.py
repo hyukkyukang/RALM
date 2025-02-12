@@ -13,7 +13,6 @@ from transformers.optimization import Adafactor
 from src.evaluation.next_word_prediction import evaluate_next_word_prediction
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import initialize_weights
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
@@ -64,6 +63,8 @@ class LightningModule(L.LightningModule):
         )(self._compiled_step)
         # For evaluation
         self.test_step_outputs: List[float] = []
+        # Add cumulative tokens counter as int64 tensor
+        self.cumulative_tokens = torch.tensor(0, dtype=torch.int64, requires_grad=False)
 
     def initialize_tokenizer(self) -> ReLlamaTokenizer:
         if self.cfg.model.name == "rellama":
@@ -133,6 +134,9 @@ class LightningModule(L.LightningModule):
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
+        if batch_idx == 0:
+            # Hack to change the device of the cumulative tokens to the device of the batch
+            self.cumulative_tokens = self.cumulative_tokens.to(self.device)
 
         self.compiled_step(
             batch["input_ids"],
@@ -140,6 +144,19 @@ class LightningModule(L.LightningModule):
             batch["labels"],
             batch["avg_char_in_token"],
         )
+
+        # Add the number of valid tokens to the cumulative tokens
+        self.cumulative_tokens += batch["num_valid_tokens"]
+
+        # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
+        if batch_idx % self.trainer.log_every_n_steps == 0:
+            # First gather and sum tokens across processes
+            gathered_tokens = self.all_gather(self.cumulative_tokens)
+            # Log the total tokens across all processes
+            self.logger.log_metrics(
+                {"cumulative_num_tokens": torch.sum(gathered_tokens)},
+                step=batch_idx,
+            )
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
             optimizer = self.optimizers()
@@ -274,9 +291,13 @@ class LightningModule(L.LightningModule):
         # Compute bits per byte (BPB)
         bpb = loss_in_bits / avg_char_in_token
 
-        # Add metrics logging
+        # Log regular metrics (these will be averaged between logging steps)
         self.log_dict(
-            {"loss": loss, "perplexity": perplexity, "bits_per_byte": bpb},
+            {
+                "loss": loss,
+                "perplexity": perplexity,
+                "bits_per_byte": bpb,
+            },
             batch_size=input_ids.size(0),
         )
 

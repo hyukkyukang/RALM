@@ -1,5 +1,6 @@
 from typing import *
 
+import torch
 from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 from transformers import DataCollatorForLanguageModeling
@@ -72,18 +73,26 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         # Decode individual tokens and count characters
         char_counts: List[int] = []
         avg_char_in_token: List[float] = []
+        num_valid_tokens: List[int] = []
         for b_idx, token_ids in enumerate(batch["input_ids"]):
             # Count characters in the full text (excluding special tokens)
             full_text = self.tokenizer.decode(token_ids, skip_special_tokens=True)
             char_counts.append(len(full_text))  # Count characters directly
-            avg_char_in_token.append(
-                len(full_text) / sum(batch["attention_mask"][b_idx])
-            )
+            num_valid_tokens.append(batch["attention_mask"][b_idx].sum().item())
+            avg_char_in_token.append(len(full_text) / num_valid_tokens[-1])
 
         # Compute the average number of characters per token (in the batch)
         avg_char_in_token = sum(avg_char_in_token) / len(avg_char_in_token)
 
+        # Count number of valid tokens
+
         batch["char_counts"] = char_counts
         batch["avg_char_in_token"] = avg_char_in_token
+        batch["num_valid_tokens"] = torch.tensor(
+            sum(num_valid_tokens),
+            dtype=torch.int64,
+            device="cpu",
+            requires_grad=False,
+        )
 
         return batch
