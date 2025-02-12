@@ -3,6 +3,7 @@ import warnings
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 import logging
+import os
 from datetime import timedelta
 
 import hkkang_utils.misc as misc_utils
@@ -17,6 +18,7 @@ from src.utils import add_config, log_if_rank_zero, overwrite_config
 
 logger = logging.getLogger("Evaluation")
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
