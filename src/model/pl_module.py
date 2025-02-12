@@ -54,7 +54,9 @@ class ReLLamaLightningModule(L.LightningModule):
         self.save_hyperparameters(cfg)
         # For efficient training
         self.compiled_step = get_compile_decorator(
-            use_compile=cfg.training.get("use_torch_compile", cfg.get("use_torch_compile", False)),
+            use_compile=cfg.training.get(
+                "use_torch_compile", cfg.get("use_torch_compile", False)
+            ),
             fullgraph=False,
         )(self._compiled_step)
         # For evaluation
@@ -65,7 +67,9 @@ class ReLLamaLightningModule(L.LightningModule):
         if self.tokenizer is None:
             self.tokenizer = ReLlamaTokenizer.from_pretrained(self.cfg.model.base_name)
 
-        llama_config: transformers.LlamaConfig = get_llama_config(self.cfg, self.tokenizer)
+        llama_config: transformers.LlamaConfig = get_llama_config(
+            self.cfg, self.tokenizer
+        )
         llama_config.attn_implementation = "flash_attention_2"
 
         # Initialize the model
@@ -87,7 +91,9 @@ class ReLLamaLightningModule(L.LightningModule):
             causal_model.apply(initialize_weights)
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
-        if self.cfg.training.get("use_torch_compile", self.cfg.get("use_torch_compile", False)):
+        if self.cfg.training.get(
+            "use_torch_compile", self.cfg.get("use_torch_compile", False)
+        ):
             if torch.cuda.get_device_capability()[0] >= 7:
                 log_if_rank_zero(
                     logger,
@@ -174,10 +180,15 @@ class ReLLamaLightningModule(L.LightningModule):
 
     def on_test_epoch_end(self) -> None:
         # Accumulate the accuracy over all the test steps and multi-processes
-        gathered_accuracies = self.all_gather(self.test_step_outputs)
+        gathered_accuracies: List[torch.Tensor] = self.all_gather(
+            self.test_step_outputs
+        )
+        # Count number of items gathered
+        total_items = sum(len(item) for item in gathered_accuracies)
+        total_sum = sum(sum(item) for item in gathered_accuracies)
         # Calculate the accuracy
-        accuracy = sum(gathered_accuracies) / len(gathered_accuracies)
-        log_if_rank_zero(logger, f"Accuracy: {accuracy} (Total: {len(gathered_accuracies)})")
+        avg_accuracy = total_sum / total_items
+        log_if_rank_zero(logger, f"Accuracy: {avg_accuracy} (Total: {total_items})")
         return None
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:

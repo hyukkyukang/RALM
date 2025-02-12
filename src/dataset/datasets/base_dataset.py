@@ -10,12 +10,16 @@ from src.tokenization import ReLlamaTokenizer
 
 
 class BaseDataset:
-    def __init__(self, cfg: DictConfig, tokenizer: ReLlamaTokenizer, tokenized_data: Dataset | None = None):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        tokenizer: ReLlamaTokenizer,
+        tokenized_data: Dataset | None = None,
+    ):
         self.cfg = cfg
         self.tokenizer = tokenizer
         self.raw_data: Dataset | None = None
         self.tokenized_data: Dataset | None = tokenized_data
-
 
     def __len__(self):
         if self.tokenized_data is None:
@@ -26,7 +30,6 @@ class BaseDataset:
         if self.tokenized_data is None:
             return None
         return self.tokenized_data[idx]
-
 
     @property
     def hf_cache_dir_path(self) -> str:
@@ -73,7 +76,9 @@ class BaseDataset:
     ) -> None:
         if self.tokenized_data is None:
             # Check if remove_columns are present in the raw_data, if not remove them from the list
-            remove_columns = [col for col in remove_columns if col in self.raw_data.column_names]
+            remove_columns = [
+                col for col in remove_columns if col in self.raw_data.column_names
+            ]
             # Tokenize the data
             self.tokenized_data = self.raw_data.map(
                 self._tokenization_fn, batched=batched, remove_columns=remove_columns
@@ -84,5 +89,9 @@ class BaseDataset:
         self.tokenized_data.save_to_disk(path)
 
     @classmethod
-    def load_from_disk(cls, cfg: DictConfig, tokenizer: ReLlamaTokenizer, path: str) -> "BaseDataset":
-        return cls(cfg=cfg, tokenizer=tokenizer, tokenized_data=Dataset.load_from_disk(path))
+    def load_from_disk(
+        cls, cfg: DictConfig, tokenizer: ReLlamaTokenizer, path: str
+    ) -> "BaseDataset":
+        return cls(
+            cfg=cfg, tokenizer=tokenizer, tokenized_data=Dataset.load_from_disk(path)
+        )

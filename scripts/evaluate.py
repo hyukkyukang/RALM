@@ -13,7 +13,7 @@ from omegaconf import DictConfig
 
 from src.dataset import ReLLamaDataModule
 from src.model import ReLLamaLightningModule
-from src.utils import add_config, overwrite_config
+from src.utils import add_config, log_if_rank_zero, overwrite_config
 
 logger = logging.getLogger("Evaluation")
 
@@ -22,10 +22,12 @@ logger = logging.getLogger("Evaluation")
 def main(cfg: DictConfig) -> None:
     # Make use_torch_compile to False
     cfg.use_torch_compile = False
-
+    cfg.training.precision = 32
     # Load trained model
     assert cfg.ckpt_path, "Please provide the path to the checkpoint"
-    model = ReLLamaLightningModule.load_from_checkpoint(cfg.ckpt_path)
+    model = ReLLamaLightningModule.load_from_checkpoint(
+        cfg.ckpt_path, map_location="cpu", training=cfg.training
+    )
 
     # Load data module and model
     data_module = ReLLamaDataModule(cfg=cfg)
@@ -41,12 +43,16 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Set configs
-    add_config(model.cfg, "testing", DictConfig({"name": "last_word_prediction", "per_device_batch_size": 1}))
+    add_config(
+        model.cfg,
+        "testing",
+        DictConfig({"name": "last_word_prediction", "per_device_batch_size": 1}),
+    )
     overwrite_config(cfg.testing, model.cfg.testing)
 
     # Evaluate
     trainer.test(model, datamodule=data_module)
-    logger.info("Evaluation completed")
+    log_if_rank_zero(logger, "Evaluation completed")
     return None
 
 
