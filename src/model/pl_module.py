@@ -185,6 +185,7 @@ class LightningModule(L.LightningModule):
                     last_word=batch["last_word"][b_idx],
                     tokenizer=self.tokenizer,
                     model=self.model,
+                    is_analyze=self.cfg.testing.is_analyze,
                 )
                 self.test_step_outputs.append(correct)
         else:

@@ -7,6 +7,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.dataset.utils import SingletonBasicTokenizer
 from src.evaluation.utils import STOPWORDS_FROM_GPT2
+from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("NextWordPrediction")
 
@@ -64,6 +65,7 @@ def evaluate_next_word_prediction(
     last_word: str,
     tokenizer: AutoTokenizer,
     model: AutoModelForCausalLM,
+    is_analyze: bool = False,
 ) -> bool:
     basic_tokenizer = SingletonBasicTokenizer()
     # Get the predicted completions
@@ -76,5 +78,13 @@ def evaluate_next_word_prediction(
     generated_texts: str = text_with_predictions[len(input_contexts) :].strip()
     predicted_words: List[str] = basic_tokenizer.tokenize(generated_texts)
     predicted_word: str = "" if len(predicted_words) == 0 else predicted_words[0]
+    is_correct: bool = predicted_word == last_word
     # Check if the predicted word is the same as the last word
-    return predicted_word == last_word
+    if is_analyze:
+        log_if_rank_zero(logger, f"Input context: {input_contexts}")
+        log_if_rank_zero(logger, f"Generated text: {generated_texts}")
+        log_if_rank_zero(logger, f"Predicted words: {predicted_words}")
+        log_if_rank_zero(logger, f"Target word: {last_word}")
+        log_if_rank_zero(logger, f"Is correct: {is_correct}")
+        log_if_rank_zero(logger, "-" * 100 + "\n")
+    return is_correct
