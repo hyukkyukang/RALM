@@ -86,6 +86,8 @@ def main(cfg: DictConfig) -> None:
         save_top_k=1,
         every_n_train_steps=cfg.training.checkpoint_save_steps,
         save_last=True,
+        save_on_train_epoch_end=True,
+        enable_version_counter=True
     )
 
     # Trainer initialization with training args

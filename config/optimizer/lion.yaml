@@ -1,5 +1,5 @@
 name: lion
-weight_decay: 0.1
-beta1: 0.9
-beta2: 0.95
+weight_decay: 1.0
+beta1: 0.95
+beta2: 0.98
 gradient_clip_val: 1.0

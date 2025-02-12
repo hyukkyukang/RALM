@@ -1,7 +1,7 @@
 # Optimization parameters
 precision: 16-mixed
-gradient_accumulation_steps: 9
-per_device_batch_size: 38
+gradient_accumulation_steps: 15
+per_device_batch_size: 18
 max_epochs: 1
 
 # Logging and checkpointing

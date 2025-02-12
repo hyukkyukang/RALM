@@ -1,11 +1,11 @@
 import torch
 
 MODEL_STATE_DICT_KEY = "state_dict"
+TORCH_COMPILE_MODULE_KEY = "_orig_mod."
 
-
-def remove_prefix(text, prefix):
-    if text.startswith(prefix):
-        return text[len(prefix) :]
+def remove_prefix(text, substring: str) -> str:
+    if substring in text:
+        return text.replace(substring, "")
     return text
 
 
@@ -16,7 +16,7 @@ def repair_checkpoint(path):
     # Repair the checkpoint
     in_state_dict = ckpt[MODEL_STATE_DICT_KEY]
     pairings = [
-        (src_key, remove_prefix(src_key, "_orig_mod."))
+        (src_key, remove_prefix(src_key, TORCH_COMPILE_MODULE_KEY))
         for src_key in in_state_dict.keys()
     ]
     if all(src_key == dest_key for src_key, dest_key in pairings):
@@ -37,6 +37,6 @@ def repair_checkpoint(path):
 
 
 if __name__ == "__main__":
-    checkpoint_path = "/mnt/md0/hkkang/retro/last.ckpt"
+    checkpoint_path = "/root/RETRO/runs/lion/lion.ckpt"
     repair_checkpoint(checkpoint_path)
     print("Done!")
