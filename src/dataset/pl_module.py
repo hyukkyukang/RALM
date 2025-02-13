@@ -165,6 +165,9 @@ class DataModule(L.LightningDataModule):
             logger.error(f"Error setting up dataset: {str(e)}")
             raise
 
+        # Post-processing
+        self.dataset.run_post_processing()
+
         return None
 
     def train_dataloader(self) -> DataLoader:

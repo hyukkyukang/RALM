@@ -1,3 +1,6 @@
 name: wikitext
 huggingface_dataset_name: Salesforce/wikitext
+subset: wikitext-103-v1
+split: test
 dir_name: data
+remove_columns: []

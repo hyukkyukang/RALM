@@ -18,6 +18,9 @@ class CurationDataset(BaseDataset):
             num_proc=8,
         )
 
+    def run_post_processing(self) -> None:
+        pass
+
 
 class CurationDataCollator:
     def __init__(self) -> None:

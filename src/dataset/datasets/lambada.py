@@ -52,7 +52,7 @@ class LambadaDataset(BaseDataset):
         else:
             # Load the raw dataset from Hugging Face
             dataset = load_dataset(
-                self.cfg.dataset.huggingface_dataset_name,
+                path=self.cfg.dataset.huggingface_dataset_name,
                 split=self.cfg.dataset.split,
                 cache_dir=self.hf_cache_dir_path,
                 num_proc=8,
@@ -71,6 +71,9 @@ class LambadaDataset(BaseDataset):
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         texts = [str(text) if text is not None else "" for text in examples["context"]]
         return self.tokenizer(texts)
+
+    def run_post_processing(self) -> None:
+        pass
 
 
 class LambadaDataCollator:

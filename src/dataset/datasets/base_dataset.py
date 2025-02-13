@@ -68,6 +68,10 @@ class BaseDataset:
     def _load_dataset(self) -> Dataset:
         raise NotImplementedError("Subclasses must implement this method")
 
+    @abc.abstractmethod
+    def run_post_processing(self) -> None:
+        raise NotImplementedError("Subclasses must implement this method")
+
     def load_dataset(self) -> None:
         self.raw_data = self._load_dataset()
         return None

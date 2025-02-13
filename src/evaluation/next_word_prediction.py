@@ -60,7 +60,7 @@ def predict_next_tokens(
 
 
 @torch.no_grad()
-def evaluate_next_word_prediction(
+def evaluate_last_word_prediction(
     token_ids: List[int],
     last_word: str,
     tokenizer: AutoTokenizer,

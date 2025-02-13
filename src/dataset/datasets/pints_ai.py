@@ -1,11 +1,11 @@
 from typing import *
 
-import torch
 from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 from transformers import DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
+from src.dataset.utils import count_avg_chars_per_token_in_batch
 from src.tokenization import ReLlamaTokenizer
 
 
@@ -19,25 +19,24 @@ class PintsAIDataset(BaseDataset):
         super().__init__(cfg, tokenizer, tokenized_data)
 
     def _load_dataset(self) -> Dataset:
-        return load_dataset(
-            self.cfg.dataset.huggingface_dataset_name,
+        # Filter out empty strings
+        dataset = load_dataset(
+            path=self.cfg.dataset.huggingface_dataset_name,
             split=self.cfg.dataset.split,
             cache_dir=self.hf_cache_dir_path,
             num_proc=8,
         )
+        dataset = dataset.filter(lambda x: x["text"])
+        return dataset
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         texts = [str(text) if text is not None else "" for text in examples["text"]]
         # TODO: Need to remove the truncation.
         # TODO: Perform tokenization and then truncate during batching.
         return self.tokenizer(texts)
-        # return self.tokenizer(
-        #     texts,
-        #     truncation=True,
-        #     padding="max_length",
-        #     max_length=self.cfg.model.max_length,
-        #     return_tensors="pt",
-        # )
+
+    def run_post_processing(self) -> None:
+        pass
 
 
 class PintsAIDataCollator(DataCollatorForLanguageModeling):
@@ -70,23 +69,24 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         # First apply the parent class collation
         batch = super().__call__(examples)
 
-        # Process the entire batch at once
-        full_texts = self.tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=True)
-        attention_masks = batch["attention_mask"]
-        
-        # Calculate character counts and valid tokens in one pass
-        char_counts = [len(text) for text in full_texts]
-        valid_tokens_per_seq = [mask.sum() for mask in attention_masks]
-        num_valid_tokens_total = sum(valid_tokens_per_seq)
+        # Decode the input_ids
+        full_texts = self.tokenizer.batch_decode(
+            batch["input_ids"], skip_special_tokens=True
+        )
 
-        # Calculate average characters per token
-        avg_char_in_token = sum(chars/tokens for chars, tokens in zip(char_counts, valid_tokens_per_seq)) / len(full_texts)
+        # Count the characters and tokens in the batch
+        avg_char_per_token, total_valid_tokens_cnt = count_avg_chars_per_token_in_batch(
+            attention_masks=batch["attention_mask"],
+            full_texts=full_texts,
+            return_total_valid_tokens=True,
+        )
 
         # Update batch with computed values
-        batch.update({
-            "char_counts": char_counts,
-            "avg_char_in_token": avg_char_in_token,
-            "num_valid_tokens": num_valid_tokens_total
-        })
+        batch.update(
+            {
+                "avg_char_per_token": avg_char_per_token,
+                "total_valid_tokens_cnt": total_valid_tokens_cnt,
+            }
+        )
 
         return batch

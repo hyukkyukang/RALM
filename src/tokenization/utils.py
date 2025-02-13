@@ -4,8 +4,12 @@ from typing import *
 from huggingface_hub import login
 from transformers import AutoTokenizer
 
+INVALID_TOKEN_ID = -100
 
-def call_autotokenizer_with_hf_token(model_name: str, hf_token: str = None, **kwargs) -> AutoTokenizer:
+
+def call_autotokenizer_with_hf_token(
+    model_name: str, hf_token: str = None, **kwargs
+) -> AutoTokenizer:
     """Initialize and return an AutoTokenizer with Hugging Face authentication.
 
     This function attempts to load a tokenizer for the specified model. If authentication
@@ -25,7 +29,7 @@ def call_autotokenizer_with_hf_token(model_name: str, hf_token: str = None, **kw
     # Get token from environment variable if not provided
     if hf_token is None:
         hf_token = os.getenv("HF_TOKEN")
-    
+
     # Call AutoTokenizer and handle 401 error with login
     tokenizer = None
     try:

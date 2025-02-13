@@ -10,9 +10,15 @@ from omegaconf import DictConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
-from src.evaluation.next_word_prediction import evaluate_next_word_prediction
+from src.evaluation.next_token_prediction import (
+    aggregate_test_step_outputs,
+    compute_perplexity_and_bpb,
+    evaluate_next_token_prediction,
+)
+from src.evaluation.next_word_prediction import evaluate_last_word_prediction
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
+from src.model.utils import lr_lambda_cosine_decay, lr_lambda_linear_decay
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
@@ -47,7 +53,6 @@ class LightningModule(L.LightningModule):
         self.automatic_optimization = False
         self.cfg = cfg
         self.total_optimization_steps = total_optimization_steps
-        self.bpb_term = math.log2(math.e) / 4  # 4 is bytes_per_token
         self.tokenizer: Union[ReLlamaTokenizer, AutoTokenizer] = (
             self.initialize_tokenizer() if tokenizer is None else tokenizer
         )
@@ -62,7 +67,7 @@ class LightningModule(L.LightningModule):
             fullgraph=False,
         )(self._compiled_step)
         # For evaluation
-        self.test_step_outputs: List[float] = []
+        self.test_step_outputs: List[Any] = []
         # Add cumulative tokens counter as int64 tensor
         self.cumulative_tokens = torch.tensor(0, dtype=torch.int64, requires_grad=False)
 
@@ -142,11 +147,11 @@ class LightningModule(L.LightningModule):
             batch["input_ids"],
             batch["attention_mask"],
             batch["labels"],
-            batch["avg_char_in_token"],
+            batch["avg_char_per_token"],
         )
 
         # Add the number of valid tokens to the cumulative tokens
-        self.cumulative_tokens += batch["num_valid_tokens"]
+        self.cumulative_tokens += batch["total_valid_tokens_cnt"]
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
         if batch_idx % self.trainer.log_every_n_steps == 0:
@@ -180,7 +185,7 @@ class LightningModule(L.LightningModule):
         bsize = len(batch["input_ids"])
         if self.cfg.testing.name == "last_word_prediction":
             for b_idx in range(bsize):
-                correct = evaluate_next_word_prediction(
+                correct = evaluate_last_word_prediction(
                     token_ids=batch["input_ids"][b_idx],
                     last_word=batch["last_word"][b_idx],
                     tokenizer=self.tokenizer,
@@ -188,23 +193,51 @@ class LightningModule(L.LightningModule):
                     is_analyze=self.cfg.testing.is_analyze,
                 )
                 self.test_step_outputs.append(correct)
+        elif self.cfg.testing.name == "next_token_prediction":
+            loss_sum, valid_tokens_cnt = evaluate_next_token_prediction(
+                token_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=batch["labels"],
+                model=self.model,
+            )
+            chars_cnt = batch["total_chars_cnt"]
+            self.test_step_outputs.append([loss_sum, valid_tokens_cnt, chars_cnt])
         else:
             raise ValueError(f"Test step {self.cfg.testing.name} not implemented")
         return None
 
     def on_test_epoch_end(self) -> None:
-        # Accumulate the accuracy over all the test steps and multi-processes
-        gathered_accuracies: List[torch.Tensor] = self.all_gather(
+        # Accumulate the step outputs over all the test steps and multi-processes
+        gathered_step_outpus: List[torch.Tensor] = self.all_gather(
             self.test_step_outputs
         )
-        # Count number of items gathered
-        total_items = sum(len(item) for item in gathered_accuracies)
-        total_sum = (
-            torch.stack([item.sum() for item in gathered_accuracies]).sum().item()
-        )
-        # Calculate the accuracy
-        avg_accuracy = total_sum / total_items
-        log_if_rank_zero(logger, f"Accuracy: {avg_accuracy} (Total: {total_items})")
+        if self.cfg.testing.name == "last_word_prediction":
+            # Aggregate the accuracy over all the test steps and multi-processes
+            total_items = sum(len(item) for item in gathered_step_outpus)
+            total_sum = (
+                torch.stack([item.sum() for item in gathered_step_outpus]).sum().item()
+            )
+            # Calculate the accuracy
+            avg_accuracy = total_sum / total_items
+            log_if_rank_zero(logger, f"Accuracy: {avg_accuracy} (Total: {total_items})")
+        elif self.cfg.testing.name == "next_token_prediction":
+            # Aggregate the loss sum, valid tokens cnt, and chars cnt over all the test steps and multi-processes
+            total_loss_sum, total_valid_tokens_cnt, total_chars_cnt = (
+                aggregate_test_step_outputs(gathered_step_outpus, self.device)
+            )
+            # Calculate the perplexity and bpb
+            perplexity, bpb = compute_perplexity_and_bpb(
+                total_loss_sum, total_valid_tokens_cnt, total_chars_cnt
+            )
+            # Log the results
+            log_if_rank_zero(
+                logger,
+                f"Perplexity: {perplexity} (Total tokens: {total_valid_tokens_cnt})",
+            )
+            log_if_rank_zero(
+                logger,
+                f"Bits per byte: {bpb} (Total characters: {total_chars_cnt})",
+            )
         return None
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:
@@ -274,7 +307,7 @@ class LightningModule(L.LightningModule):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         labels: torch.Tensor,
-        avg_char_in_token: float,
+        avg_char_per_token: float,
     ) -> None:
         outputs = self(
             input_ids=input_ids,
@@ -284,13 +317,12 @@ class LightningModule(L.LightningModule):
         # Get the loss and calculate perplexity and bits per byte (BPB)
         loss = outputs.loss
         perplexity = torch.exp(loss)
-        # bpb = loss * self.bpb_term
 
         # Convert loss (nats) to bits
         loss_in_bits = loss * math.log2(math.e)
 
         # Compute bits per byte (BPB)
-        bpb = loss_in_bits / avg_char_in_token
+        bpb = loss_in_bits / avg_char_per_token
 
         # Log regular metrics (these will be averaged between logging steps)
         self.log_dict(
@@ -307,61 +339,3 @@ class LightningModule(L.LightningModule):
         # Backward
         self.manual_backward(loss)
         return None
-
-
-# Define a TorchScript-compatible function for the learning rate schedule
-@torch.jit.script
-def lr_lambda_cosine_decay(
-    it: int, warmup_iters: int, total_iters: int, max_lr: float, min_lr: float
-) -> float:
-    """
-    Computes learning rate scaling factor for warmup and cosine decay.
-
-    Args:
-        it (int): Current optimizer step.
-        warmup_iters (int): Number of warmup steps.
-        total_iters (int): Total optimizer steps.
-        min_lr (float): Minimum learning rate.
-        max_lr (float): Maximum learning rate.
-
-    Returns:
-        float: The learning rate multiplier.
-    """
-    if it < warmup_iters:
-        return float(it) / float(warmup_iters)  # Linear warmup
-    elif it >= total_iters:
-        return min_lr / max_lr  # Hold at min LR
-    else:
-        decay_ratio = float(it - warmup_iters) / float(total_iters - warmup_iters)
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Cosine decay
-        # Ensure we don't go below min_lr
-        return max(min_lr / max_lr, (min_lr + coeff * (max_lr - min_lr)) / max_lr)
-
-
-@torch.jit.script
-def lr_lambda_linear_decay(
-    it: int, warmup_iters: int, total_iters: int, max_lr: float, min_lr: float = 0.0
-) -> float:
-    """
-    Computes learning rate scaling factor for warmup and linear decay to zero.
-
-    Args:
-        it (int): Current optimizer step.
-        warmup_iters (int): Number of warmup steps.
-        total_iters (int): Total optimizer steps.
-        max_lr (float): Maximum learning rate.
-        min_lr (float): Minimum learning rate.
-
-    Returns:
-        float: The learning rate multiplier.
-    """
-    if it < warmup_iters:
-        return float(it) / float(warmup_iters)  # Linear warmup
-    elif it >= total_iters:
-        return min_lr / max_lr
-    else:
-        # Linear decay to min_lr, normalized by max_lr for use with LambdaLR
-        return (
-            min_lr
-            + (max_lr - min_lr) * (total_iters - it) / (total_iters - warmup_iters)
-        ) / max_lr
