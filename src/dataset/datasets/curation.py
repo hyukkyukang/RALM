@@ -8,7 +8,8 @@ from omegaconf import DictConfig
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
-from src.dataset.utils import INVALID_TOKEN_ID, perform_sliding_window_segmentation
+from src.dataset.utils import (INVALID_TOKEN_ID,
+                               perform_sliding_window_segmentation)
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
