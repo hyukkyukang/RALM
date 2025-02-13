@@ -72,7 +72,7 @@ class LambadaDataset(BaseDataset):
         texts = [str(text) if text is not None else "" for text in examples["context"]]
         return self.tokenizer(texts)
 
-    def run_post_processing(self) -> None:
+    def _run_post_processing(self) -> None:
         pass
 
 

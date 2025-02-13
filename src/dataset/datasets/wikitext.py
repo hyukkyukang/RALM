@@ -23,7 +23,6 @@ class WikiTextDataset(BaseDataset):
         tokenized_data: Dataset | None = None,
     ):
         super().__init__(cfg, tokenizer, tokenized_data)
-        self.is_data_segmented = False
 
     def _load_dataset(self) -> Dataset:
         dataset = load_dataset(
@@ -40,7 +39,7 @@ class WikiTextDataset(BaseDataset):
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         return self.tokenizer(examples["text"], truncation=False)
 
-    def run_post_processing(self) -> None:
+    def _run_post_processing(self) -> None:
         """
         Must call this function after tokenization, and before passing to the inference model.
         Segment the text as a sliding window.
@@ -77,7 +76,6 @@ class WikiTextDataset(BaseDataset):
 
         # Save the segmented data into self.tokenized_data
         self.tokenized_data = Dataset.from_dict(dict_of_lists)
-        self.is_data_segmented = True
         return None
 
 

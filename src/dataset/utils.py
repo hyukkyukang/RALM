@@ -69,7 +69,7 @@ def normalize_quotes(text: str) -> str:
 
 
 def perform_sliding_window_segmentation(
-    token_ids: List[int], window_size: int, stride: int
+    token_ids: List[int], window_size: int, stride: int, valid_token_start_idx: int = 0
 ) -> List[Dict[str, Any]]:
     """
     Segment token IDs into overlapping windows for training, ensuring that:
@@ -92,6 +92,9 @@ def perform_sliding_window_segmentation(
         input_ids = torch.tensor(token_ids, dtype=torch.long)
         attention_mask = torch.ones_like(input_ids, dtype=torch.long)
         labels = input_ids.clone()  # All are "new" for the single segment
+
+        if valid_token_start_idx > 0:
+            labels[:valid_token_start_idx] = INVALID_TOKEN_ID
 
         segments.append(
             {
@@ -142,6 +145,22 @@ def perform_sliding_window_segmentation(
         seg_len = len(segment_tokens)
         if seg_len > num_new_tokens:
             labels[: seg_len - num_new_tokens] = INVALID_TOKEN_ID
+
+        # Mask out all tokens before valid_token_start_idx
+        if valid_token_start_idx > 0:
+            # If valid_token_start_idx is after the end_idx, we need to mask out all the tokens
+            if valid_token_start_idx >= end_idx:
+                labels[:] = INVALID_TOKEN_ID
+            # If valid_token_start_idx is in after the start_idx and before the end_idx,
+            # we need to mask out the tokens before valid_token_start_idx
+            elif valid_token_start_idx > start_idx and valid_token_start_idx < end_idx:
+                # Mask out the tokens before valid_token_start_idx
+                local_valid_token_start_idx = valid_token_start_idx - start_idx
+                labels[:local_valid_token_start_idx] = INVALID_TOKEN_ID
+            # If valid_token_start_idx is before the start_idx,
+            # we do not modify anything
+            elif valid_token_start_idx <= start_idx:
+                pass
 
         # Append
         segments.append(
