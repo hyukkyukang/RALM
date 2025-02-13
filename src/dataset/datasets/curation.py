@@ -7,7 +7,7 @@ from omegaconf import DictConfig
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
-from src.dataset.utils import INVALID_TOKEN_ID, count_avg_chars_per_token_in_batch
+from src.dataset.utils import INVALID_TOKEN_ID
 from src.tokenization import ReLlamaTokenizer
 
 
