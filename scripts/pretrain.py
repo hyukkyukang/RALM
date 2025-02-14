@@ -81,7 +81,7 @@ def main(cfg: DictConfig) -> None:
     # Initialize checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=default_root_dir,
-        monitor="loss",
+        monitor="NTP_wikitext_perplexity",
         mode="min",
         save_top_k=1,
         every_n_train_steps=cfg.training.checkpoint_save_steps,
@@ -96,7 +96,9 @@ def main(cfg: DictConfig) -> None:
         max_epochs=cfg.training.max_epochs,
         profiler="simple",
         accelerator="gpu",
-        val_check_interval=cfg.validation.init_check_interval,
+        num_sanity_val_steps=cfg.validation.num_sanity_val_steps,
+        val_check_interval=cfg.validation.val_check_interval,
+        check_val_every_n_epoch=cfg.validation.check_val_every_n_epoch,
         devices=torch.cuda.device_count(),
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.logging_steps,

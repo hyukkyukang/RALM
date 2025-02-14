@@ -6,8 +6,8 @@ max_epochs: 1
 
 # Logging and checkpointing
 logging_steps: 500
-checkpoint_save_steps: 10000
-resume_ckpt_path: Null
+checkpoint_save_steps: null
+resume_ckpt_path: null
 
 # Dataloader
 num_workers: 8
