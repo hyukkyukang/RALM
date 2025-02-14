@@ -1,6 +1,8 @@
+import copy
 import logging
 from typing import *
 
+import lightning as L
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -9,6 +11,21 @@ from src.evaluation.utils import STOPWORDS_FROM_GPT2
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("NextWordPrediction")
+
+
+def is_model_compiled(model: Union[L.LightningModule, AutoModelForCausalLM]) -> bool:
+    if isinstance(model, L.LightningModule):
+        if (
+            model.cfg.use_torch_compile
+            and torch.cuda.is_available()
+            and torch.cuda.get_device_capability()[0] >= 7
+        ):
+            assert isinstance(
+                model.model, torch._dynamo.eval_frame.OptimizedModule
+            ), f"Model is not an OptimizedModule?: {type(model.model)}"
+            return True
+    else:
+        return isinstance(model, torch._dynamo.eval_frame.OptimizedModule)
 
 
 @torch.no_grad()
@@ -32,7 +49,13 @@ def predict_next_tokens(
     for _ in range(steps_to_predict):
         outputs = model(current_input_token_ids, past_key_values=states)
         logits = outputs.logits  # Get logits from the outputs
-        states = outputs.past_key_values  # Get the state from outputs
+        # Clone if using torch.compile
+        if is_model_compiled(model):
+            # states = outputs.past_key_values.clone()  # Get the state from outputs
+            states = copy.deepcopy(outputs.past_key_values)
+
+        else:
+            states = outputs.past_key_values
 
         # Get the top k candidates
         _, line_encoded_candidates = torch.topk(

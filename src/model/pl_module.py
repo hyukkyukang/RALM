@@ -97,7 +97,7 @@ class LightningModule(L.LightningModule):
         if self.cfg.training.get(
             "use_torch_compile", self.cfg.get("use_torch_compile", False)
         ):
-            if torch.cuda.get_device_capability()[0] >= 7:
+            if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7:
                 log_if_rank_zero(
                     logger,
                     "Compiling the model with torch compile...",
@@ -124,17 +124,21 @@ class LightningModule(L.LightningModule):
     def forward(
         self,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Any:
         # Use inference_mode when not training
         if not self.training:
             with torch.inference_mode():
                 return self.model(
-                    input_ids=input_ids, attention_mask=attention_mask, labels=labels
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    **kwargs,
                 )
         return self.model(
-            input_ids=input_ids, attention_mask=attention_mask, labels=labels
+            input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
 
     def training_step(
@@ -412,7 +416,7 @@ class LightningModule(L.LightningModule):
                     batch_token_ids=batch_token_ids,
                     target_last_words=target_last_words,
                     tokenizer=self.tokenizer,
-                    model=self.model,
+                    model=self,
                 )
             )
         return sum(is_correct_list) / bsize
@@ -426,6 +430,6 @@ class LightningModule(L.LightningModule):
             token_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
             labels=batch["labels"],
-            model=self.model,
+            model=self,
         )
         return loss_sum, valid_tokens_cnt
