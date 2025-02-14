@@ -11,6 +11,7 @@ hydra-core
 lightning
 tensorboard
 standard-imghdr # Temporary fix the tensorboard error
+lion-pytorch
 
 # packages for dataset
 ftfy
