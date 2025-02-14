@@ -6,6 +6,7 @@ import tqdm
 from datasets import Dataset
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
+import torch
 
 from src.tokenization import ReLlamaTokenizer
 
@@ -18,9 +19,10 @@ class BaseDataset:
         tokenized_data: Dataset | None = None,
     ):
         self.cfg = cfg
-        self.tokenizer = tokenizer
+        self.tokenizer: Union[ReLlamaTokenizer, AutoTokenizer] = tokenizer
         self.raw_data: Dataset | None = None
         self.tokenized_data: Dataset | None = tokenized_data
+        self.is_post_processed: bool = False
 
     def __len__(self):
         if self.tokenized_data is None:
@@ -55,7 +57,9 @@ class BaseDataset:
             self._total_tokens = sum(
                 sum(x)
                 for x in tqdm.tqdm(
-                    self.tokenized_data["attention_mask"], desc="Counting tokens"
+                    self.tokenized_data["attention_mask"],
+                    desc="Counting tokens",
+                    disable=not torch.distributed.get_rank() == 0,
                 )
             )
         return self._total_tokens
@@ -69,8 +73,14 @@ class BaseDataset:
         raise NotImplementedError("Subclasses must implement this method")
 
     @abc.abstractmethod
-    def run_post_processing(self) -> None:
+    def _run_post_processing(self) -> None:
         raise NotImplementedError("Subclasses must implement this method")
+
+    def run_post_processing(self) -> None:
+        if not self.is_post_processed:
+            self._run_post_processing()
+            self.is_post_processed = True
+        return None
 
     def load_dataset(self) -> None:
         self.raw_data = self._load_dataset()

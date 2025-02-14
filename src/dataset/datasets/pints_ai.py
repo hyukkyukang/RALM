@@ -35,7 +35,7 @@ class PintsAIDataset(BaseDataset):
         # TODO: Perform tokenization and then truncate during batching.
         return self.tokenizer(texts)
 
-    def run_post_processing(self) -> None:
+    def _run_post_processing(self) -> None:
         pass
 
 

@@ -19,23 +19,24 @@ class SingletonBasicTokenizer:
 
 @torch.jit.script
 def count_avg_chars_per_token_in_batch(
-    attention_masks: List[List[int]],
+    attention_masks: torch.Tensor,
     full_texts: List[str],
     return_total_valid_tokens: bool = False,
 ) -> Union[float, Tuple[float, int]]:
-    # Calculate character counts and valid tokens in one pass
+    # Calculate character counts and valid tokens per sequence
     char_counts_per_seq: List[int] = [len(text) for text in full_texts]
-    valid_tokens_per_seq: List[int] = [sum(mask) for mask in attention_masks]
+    valid_tokens_per_seq: List[int] = [int(mask.sum().item()) for mask in attention_masks]
+
+    # Convert to tensor for sum operation
     num_valid_tokens_total: int = sum(valid_tokens_per_seq)
     num_total_tokens_cnt: int = sum(char_counts_per_seq)
 
     # Calculate average characters per token
-    avg_char_in_token = num_total_tokens_cnt / num_valid_tokens_total
+    avg_char_in_token: float = float(num_total_tokens_cnt) / float(num_valid_tokens_total)
 
     if return_total_valid_tokens:
         return avg_char_in_token, num_valid_tokens_total
-    else:
-        return avg_char_in_token
+    return avg_char_in_token
 
 
 def split_text_into_context_and_last_word(line: str) -> Dict[str, str]:
@@ -69,7 +70,7 @@ def normalize_quotes(text: str) -> str:
 
 
 def perform_sliding_window_segmentation(
-    token_ids: List[int], window_size: int, stride: int
+    token_ids: List[int], window_size: int, stride: int, valid_token_start_idx: int = 0
 ) -> List[Dict[str, Any]]:
     """
     Segment token IDs into overlapping windows for training, ensuring that:
@@ -92,6 +93,9 @@ def perform_sliding_window_segmentation(
         input_ids = torch.tensor(token_ids, dtype=torch.long)
         attention_mask = torch.ones_like(input_ids, dtype=torch.long)
         labels = input_ids.clone()  # All are "new" for the single segment
+
+        if valid_token_start_idx > 0:
+            labels[:valid_token_start_idx] = INVALID_TOKEN_ID
 
         segments.append(
             {
@@ -142,6 +146,22 @@ def perform_sliding_window_segmentation(
         seg_len = len(segment_tokens)
         if seg_len > num_new_tokens:
             labels[: seg_len - num_new_tokens] = INVALID_TOKEN_ID
+
+        # Mask out all tokens before valid_token_start_idx
+        if valid_token_start_idx > 0:
+            # If valid_token_start_idx is after the end_idx, we need to mask out all the tokens
+            if valid_token_start_idx >= end_idx:
+                labels[:] = INVALID_TOKEN_ID
+            # If valid_token_start_idx is in after the start_idx and before the end_idx,
+            # we need to mask out the tokens before valid_token_start_idx
+            elif valid_token_start_idx > start_idx and valid_token_start_idx < end_idx:
+                # Mask out the tokens before valid_token_start_idx
+                local_valid_token_start_idx = valid_token_start_idx - start_idx
+                labels[:local_valid_token_start_idx] = INVALID_TOKEN_ID
+            # If valid_token_start_idx is before the start_idx,
+            # we do not modify anything
+            elif valid_token_start_idx <= start_idx:
+                pass
 
         # Append
         segments.append(

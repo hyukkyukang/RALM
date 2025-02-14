@@ -1,6 +1,9 @@
 name: curation
 huggingface_dataset_name: d0rj/curation-corpus
 subset: null
-split: test
+split: train # There is only train split
 dir_name: data
-remove_columns: []
+remove_columns:
+  - url
+  - date
+  

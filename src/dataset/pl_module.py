@@ -77,7 +77,11 @@ class DataModule(L.LightningDataModule):
         elif self.cfg.dataset.name == "wikitext":
             return WikiTextDataCollator(tokenizer=self.tokenizer, mlm=False)
         elif self.cfg.dataset.name == "curation":
-            return CurationDataCollator(tokenizer=self.tokenizer, mlm=False)
+            return CurationDataCollator(
+                tokenizer=self.tokenizer,
+                mlm=False,
+                model_max_length=self.cfg.model.max_length,
+            )
         raise ValueError(
             f"Data collator for dataset {self.cfg.dataset.name} not supported"
         )
