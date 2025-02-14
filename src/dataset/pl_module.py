@@ -4,21 +4,11 @@ from functools import cached_property
 from typing import *
 
 import lightning as L
-from datasets import Dataset as HuggingFaceDataset
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
-from src.dataset.datasets import (
-    BaseDataset,
-    CurationDataCollator,
-    CurationDataset,
-    LambadaDataCollator,
-    LambadaDataset,
-    PintsAIDataCollator,
-    PintsAIDataset,
-    WikiTextDataCollator,
-    WikiTextDataset,
-)
+from src.dataset.datasets import BaseDataset
+from src.dataset.datasets.registry import DATASET_REGISTRY
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
@@ -26,172 +16,204 @@ logger = logging.getLogger("DataModule")
 
 
 class DataModule(L.LightningDataModule):
-    def __init__(self, cfg: DictConfig):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        tokenizer: Optional[ReLlamaTokenizer] = None,
+        is_test: bool = False,
+    ):
         super().__init__()
         self.cfg = cfg
-        self.dataset: HuggingFaceDataset | None = None
-        self.dataset_size: int = 0
-        self.max_length: int = cfg.model.max_length
-        self.tokenizer: ReLlamaTokenizer = ReLlamaTokenizer.from_pretrained(
-            cfg.model.base_name
+        self.is_test = is_test
+        self.tokenizer: ReLlamaTokenizer = (
+            ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
+            if tokenizer is None
+            else tokenizer
         )
-
-    def __len__(self):
-        if self.dataset is None:
-            assert self.dataset_size > 0, "Dataset size not set"
-            return self.dataset_size
-        assert len(self.dataset) == self.dataset_size, "Dataset size mismatch"
-        return len(self.dataset)
-
-    @property
-    def tokenized_dataset_path(self) -> str:
-        return os.path.join(self.hf_cache_dir_path, "tokenized")
-
-    @property
-    def hf_cache_dir_path(self) -> str:
-        return os.path.join(
-            self.cfg._global.root_dir_path,
-            self.cfg.dataset.dir_name,
-            "huggingface",
-            self.cfg.dataset.name,
-        )
-
-    @property
-    def dataset_class(self) -> Type[BaseDataset]:
-        if self.cfg.dataset.name == "pints-ai":
-            return PintsAIDataset
-        elif self.cfg.dataset.name == "lambada":
-            return LambadaDataset
-        elif self.cfg.dataset.name == "wikitext":
-            return WikiTextDataset
-        elif self.cfg.dataset.name == "curation":
-            return CurationDataset
-        raise ValueError(f"Dataset {self.cfg.dataset.name} not supported")
 
     @cached_property
-    def data_collator(self) -> Callable:
-        if self.cfg.dataset.name == "pints-ai":
-            return PintsAIDataCollator(tokenizer=self.tokenizer, mlm=False)
-        elif self.cfg.dataset.name == "lambada":
-            return LambadaDataCollator(tokenizer=self.tokenizer, mlm=False)
-        elif self.cfg.dataset.name == "wikitext":
-            return WikiTextDataCollator(tokenizer=self.tokenizer, mlm=False)
-        elif self.cfg.dataset.name == "curation":
-            return CurationDataCollator(
-                tokenizer=self.tokenizer,
-                mlm=False,
-                model_max_length=self.cfg.model.max_length,
-            )
-        raise ValueError(
-            f"Data collator for dataset {self.cfg.dataset.name} not supported"
+    def train_dataset(self) -> BaseDataset | None:
+        if self.is_test:
+            return None
+        dataset_name = self.cfg.training.train_dataset_name
+        dataset_cls = DATASET_REGISTRY[dataset_name]
+        return dataset_cls(
+            cfg=self.cfg.dataset[dataset_name],
+            global_cfg=self.cfg,
+            tokenizer=self.tokenizer,
         )
 
-    def prepare_data(self) -> None:
+    @cached_property
+    def val_datasets(self) -> List[BaseDataset] | None:
+        if self.is_test:
+            return None
+        datasets: List[BaseDataset] = []
+        for task_name in self.cfg.validation.task_names:
+            datasets.extend(self._get_dataset_from_task(task_name))
+        return datasets
+
+    @cached_property
+    def test_datasets(self) -> List[BaseDataset] | None:
+        if not self.is_test:
+            return None
+        datasets: List[BaseDataset] = []
+        for task_name in self.cfg.testing.task_names:
+            datasets.extend(self._get_dataset_from_task(task_name))
+        return datasets
+
+    def _get_dataset_from_task(self, task_name: str) -> List[BaseDataset]:
+        datasets: List[BaseDataset] = []
+        task_cfg = self.cfg.task[task_name]
+        for dataset_name in task_cfg.dataset_names:
+            dataset_cls = DATASET_REGISTRY[dataset_name]
+            datasets.append(
+                dataset_cls(
+                    cfg=self.cfg.dataset[dataset_name],
+                    global_cfg=self.cfg,
+                    tokenizer=self.tokenizer,
+                )
+            )
+        return datasets
+
+    def _prepare_dataset(self, dataset: BaseDataset) -> None:
         """Downloads the dataset if not already present.
         This method is called only on 1 GPU in distributed training."""
-        dataset: BaseDataset = self.dataset_class(
-            cfg=self.cfg, tokenizer=self.tokenizer
-        )
-        try:
+        if not os.path.exists(dataset.tokenized_cache_path):
+            # Download the dataset from the hub
+            log_if_rank_zero(
+                logger,
+                f"Downloading {dataset.cfg.name} data ({dataset.cfg.split} split) into {dataset.hf_cache_dir_path}",
+            )
+            dataset.load_dataset()
+
+            # Tokenize the dataset and save as a cache file
+            log_if_rank_zero(logger, "Tokenizing dataset...")
+            dataset.tokenize_data(
+                batched=True,
+                remove_columns=dataset.cfg.remove_columns,
+            )
+
+            # Check if the directory exists
             if not os.path.exists(dataset.tokenized_cache_path):
-                # Download the dataset from the hub
                 log_if_rank_zero(
                     logger,
-                    f"Downloading {self.cfg.dataset.name} data ({self.cfg.dataset.split} split) into {self.hf_cache_dir_path}",
+                    f"Directory {dataset.tokenized_cache_path} does not exist. Creating it.",
                 )
-                dataset.load_dataset()
+                os.makedirs(dataset.tokenized_cache_path)
+            # Save the tokenized dataset
+            log_if_rank_zero(
+                logger,
+                f"Saving tokenized dataset to {dataset.tokenized_cache_path}",
+            )
+            dataset.save_to_disk(dataset.tokenized_cache_path)
 
-                # Tokenize the dataset and save as a cache file
-                log_if_rank_zero(logger, "Tokenizing dataset...")
-                dataset.tokenize_data(
-                    batched=True,
-                    remove_columns=self.cfg.dataset.remove_columns,
-                )
+            log_if_rank_zero(
+                logger, f"Number of tokens in the dataset: {dataset.total_tokens}"
+            )
+        else:
+            # Load the cached dataset
+            dataset.load_from_disk(dataset.tokenized_cache_path)
+        return None
 
-                # Check if the directory exists
-                if not os.path.exists(dataset.tokenized_cache_path):
-                    log_if_rank_zero(
-                        logger,
-                        f"Directory {dataset.tokenized_cache_path} does not exist. Creating it.",
-                    )
-                    os.makedirs(dataset.tokenized_cache_path)
-                # Save the tokenized dataset
-                log_if_rank_zero(
-                    logger,
-                    f"Saving tokenized dataset to {dataset.tokenized_cache_path}",
-                )
-                dataset.save_to_disk(dataset.tokenized_cache_path)
-
-                log_if_rank_zero(
-                    logger, f"Number of tokens in the dataset: {dataset.total_tokens}"
-                )
-                self.dataset_size = len(dataset)
-            else:
-                # Load the cached dataset
-                train_dataset: BaseDataset = self.dataset_class.load_from_disk(
-                    cfg=self.cfg,
-                    tokenizer=self.tokenizer,
-                    path=dataset.tokenized_cache_path,
-                )
-                self.dataset_size = len(train_dataset)
-        except Exception as e:
-            logger.error(f"Error preparing dataset: {str(e)}")
-            raise
-
-    def setup(self, stage: str | None = None) -> None:
+    def _setup_dataset(self, dataset: BaseDataset) -> None:
         """Loads and preprocesses the dataset for training.
         This method is called on every GPU in distributed training.
 
         Args:
             stage: Either 'fit', 'validate', 'test', or 'predict'. Currently unused.
         """
-        dataset: BaseDataset = self.dataset_class(
-            cfg=self.cfg, tokenizer=self.tokenizer
+        if not os.path.exists(dataset.tokenized_cache_path):
+            raise FileNotFoundError(
+                f"Tokenized dataset not found at {dataset.tokenized_cache_path}. Run prepare_data first."
+            )
+
+        # Load the cached tokenized dataset instead of the raw dataset
+        dataset.load_from_disk(dataset.tokenized_cache_path)
+        log_if_rank_zero(
+            logger,
+            f"Loaded cached tokenized dataset with {len(dataset)} examples",
         )
-        try:
-            if not os.path.exists(dataset.tokenized_cache_path):
-                raise FileNotFoundError(
-                    f"Tokenized dataset not found at {dataset.tokenized_cache_path}. Run prepare_data first."
-                )
-
-            # Load the cached tokenized dataset instead of the raw dataset
-            self.dataset: BaseDataset = self.dataset_class.load_from_disk(
-                cfg=self.cfg,
-                tokenizer=self.tokenizer,
-                path=dataset.tokenized_cache_path,
-            )
-            log_if_rank_zero(
-                logger,
-                f"Loaded cached tokenized dataset with {len(self.dataset)} examples",
-            )
-
-        except Exception as e:
-            logger.error(f"Error setting up dataset: {str(e)}")
-            raise
 
         # Post-processing
-        self.dataset.run_post_processing()
+        dataset.run_post_processing()
+
+        return dataset
+
+    def prepare_data(self) -> None:
+        if self.is_test:
+            # Prepare the test dataset
+            for test_dataset in self.test_datasets:
+                self._prepare_dataset(test_dataset)
+        else:
+            # Prepare the train dataset
+            self._prepare_dataset(self.train_dataset)
+
+            # Prepare the val dataset
+            for val_dataset in self.val_datasets:
+                self._prepare_dataset(val_dataset)
 
         return None
 
-    def train_dataloader(self) -> DataLoader:
+    def setup(self, stage: str | None = None) -> None:
+        if self.is_test:
+            # Setup the test dataset
+            for test_dataset in self.test_datasets:
+                self._setup_dataset(test_dataset)
+        else:
+            # Setup the train dataset
+            self._setup_dataset(self.train_dataset)
+
+            # Setup the val datasets
+            for val_dataset in self.val_datasets:
+                self._setup_dataset(val_dataset)
+        return None
+
+    def train_dataloader(self) -> DataLoader | None:
+        if self.is_test:
+            return None
         return DataLoader(
-            self.dataset,
+            self.train_dataset,
             batch_size=self.cfg.training.per_device_batch_size,
             num_workers=self.cfg.training.num_workers,
-            collate_fn=self.data_collator,
+            collate_fn=self.train_dataset.collator,
             shuffle=True,
             drop_last=True,
             pin_memory=True,
         )
 
-    def test_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.dataset,
-            batch_size=self.cfg.testing.per_device_batch_size,
-            num_workers=self.cfg.testing.num_workers,
-            collate_fn=self.data_collator,
-            shuffle=False,
-            drop_last=False,
-            pin_memory=True,
-        )
+    def val_dataloader(self) -> List[DataLoader] | None:
+        if self.is_test:
+            return None
+        # Create a list of DataLoaders for each validation dataset.
+        val_dataloaders: List[DataLoader] = []
+        for val_dataset in self.val_datasets:
+            val_dataloaders.append(
+                DataLoader(
+                    val_dataset,
+                    batch_size=self.cfg.validation.per_device_batch_size,
+                    num_workers=self.cfg.validation.num_workers,
+                    collate_fn=val_dataset.collator,
+                    shuffle=False,
+                    drop_last=False,
+                    pin_memory=True,
+                )
+            )
+        return val_dataloaders
+
+    def test_dataloader(self) -> List[DataLoader] | None:
+        if not self.is_test:
+            return None
+        test_dataloaders: List[DataLoader] = []
+        for test_dataset in self.test_datasets:
+            test_dataloaders.append(
+                DataLoader(
+                    test_dataset,
+                    batch_size=self.cfg.testing.per_device_batch_size,
+                    num_workers=self.cfg.testing.num_workers,
+                    collate_fn=test_dataset.collator,
+                    shuffle=False,
+                    drop_last=False,
+                    pin_memory=True,
+                )
+            )
+        return test_dataloaders

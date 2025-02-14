@@ -11,3 +11,4 @@ resume_ckpt_path: Null
 
 # Dataloader
 num_workers: 8
+train_dataset_name: pints_ai

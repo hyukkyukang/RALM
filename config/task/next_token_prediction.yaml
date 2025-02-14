@@ -1,0 +1,6 @@
+next_token_prediction:
+  name: next_token_prediction
+  stride: 512
+  dataset_names:
+    - wikitext
+    - curation

@@ -1,4 +1,6 @@
 import logging
+import os
+from functools import cached_property
 from typing import *
 
 import torch
@@ -19,16 +21,21 @@ class WikiTextDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
+        global_cfg: DictConfig,
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Dataset | None = None,
     ):
-        super().__init__(cfg, tokenizer, tokenized_data)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data)
+
+    @cached_property
+    def collator(self) -> "WikiTextDataCollator":
+        return WikiTextDataCollator(tokenizer=self.tokenizer)
 
     def _load_dataset(self) -> Dataset:
         dataset = load_dataset(
-            path=self.cfg.dataset.huggingface_dataset_name,
-            name=self.cfg.dataset.subset,
-            split=self.cfg.dataset.split,
+            path=self.cfg.huggingface_dataset_name,
+            name=self.cfg.subset,
+            split=self.cfg.split,
             cache_dir=self.hf_cache_dir_path,
             num_proc=8,
         )
@@ -50,8 +57,8 @@ class WikiTextDataset(BaseDataset):
             logger,
             f"Post-processing: Segmenting data of length {len(self.tokenized_data)}...",
         )
-        window_size = self.cfg.model.max_length
-        stride = self.cfg.testing.stride
+        window_size = self.global_cfg.model.max_length
+        stride = self.global_cfg.task.next_token_prediction.stride
         assert window_size >= stride, "Window size must be greater than stride"
         log_if_rank_zero(logger, f"Window size: {window_size}, Stride: {stride}")
 
@@ -59,24 +66,41 @@ class WikiTextDataset(BaseDataset):
         assert len(self.tokenized_data) == 1, "We assume all the text is concatenated."
         token_ids = self.tokenized_data["input_ids"][0]
 
-        # Perform the sliding window segmentation
-        segmented_data: List[Dict[str, Any]] = perform_sliding_window_segmentation(
-            token_ids, window_size, stride
-        )
-        log_if_rank_zero(
-            logger,
-            f"Post-processing: Segmented data into {len(segmented_data)} segments",
-        )
+        segment_cache_dir_path = self.get_segment_cache_dir_path(window_size, stride)
+        if os.path.exists(segment_cache_dir_path):
+            # Load the cached segments
+            log_if_rank_zero(
+                logger, f"Loading cached segments from {segment_cache_dir_path}"
+            )
+            dataset_of_segments = Dataset.load_from_disk(segment_cache_dir_path)
+        else:
+            # Perform the sliding window segmentation
+            segmented_data: List[Dict[str, Any]] = perform_sliding_window_segmentation(
+                token_ids, window_size, stride
+            )
+            log_if_rank_zero(
+                logger,
+                f"Post-processing: Segmented data into {len(self.tokenized_data)} segments",
+            )
 
-        # Transform list of dicts into dict of lists
-        dict_of_lists = {
-            key: [example[key] for example in segmented_data]
-            for key in segmented_data[0].keys()
-        }
+            # Transform list of dicts into dict of lists
+            dict_of_lists = {
+                key: [example[key] for example in segmented_data]
+                for key in segmented_data[0].keys()
+            }
+            dataset_of_segments = Dataset.from_dict(dict_of_lists)
+            log_if_rank_zero(
+                logger, f"Saving segmented data to {segment_cache_dir_path}"
+            )
+            # Save the segmented data into self.tokenized_data
+            dataset_of_segments.save_to_disk(segment_cache_dir_path)
 
         # Save the segmented data into self.tokenized_data
-        self.tokenized_data = Dataset.from_dict(dict_of_lists)
+        self.tokenized_data = dataset_of_segments
         return None
+
+    def get_segment_cache_dir_path(self, window: int, stride: int) -> str:
+        return os.path.join(self.hf_cache_dir_path, f"segment_cache_{window}_{stride}")
 
 
 class WikiTextDataCollator:

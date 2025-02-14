@@ -1,3 +1,4 @@
+from functools import cached_property
 from typing import *
 
 import torch
@@ -14,16 +15,21 @@ class PintsAIDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
+        global_cfg: DictConfig,
         tokenizer: ReLlamaTokenizer,
         tokenized_data: Dataset | None = None,
     ):
-        super().__init__(cfg, tokenizer, tokenized_data)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data)
+
+    @cached_property
+    def collator(self) -> "PintsAIDataCollator":
+        return PintsAIDataCollator(tokenizer=self.tokenizer, mlm=False)
 
     def _load_dataset(self) -> Dataset:
         # Filter out empty strings
         dataset = load_dataset(
-            path=self.cfg.dataset.huggingface_dataset_name,
-            split=self.cfg.dataset.split,
+            path=self.cfg.huggingface_dataset_name,
+            split=self.cfg.split,
             cache_dir=self.hf_cache_dir_path,
             num_proc=8,
         )

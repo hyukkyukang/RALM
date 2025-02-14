@@ -1,4 +1,6 @@
 import logging
+import os
+from functools import cached_property
 from typing import *
 
 import torch
@@ -8,8 +10,7 @@ from omegaconf import DictConfig
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
-from src.dataset.utils import (INVALID_TOKEN_ID,
-                               perform_sliding_window_segmentation)
+from src.dataset.utils import INVALID_TOKEN_ID, perform_sliding_window_segmentation
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
@@ -20,10 +21,19 @@ class CurationDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
+        global_cfg: DictConfig,
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Dataset | None = None,
     ):
-        super().__init__(cfg, tokenizer, tokenized_data)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data)
+
+    @cached_property
+    def collator(self) -> "CurationDataCollator":
+        return CurationDataCollator(
+            tokenizer=self.tokenizer,
+            mlm=False,
+            model_max_length=self.global_cfg.model.max_length,
+        )
 
     @property
     def total_tokens(self) -> int:
@@ -44,9 +54,9 @@ class CurationDataset(BaseDataset):
 
     def _load_dataset(self) -> Dataset:
         dataset = load_dataset(
-            path=self.cfg.dataset.huggingface_dataset_name,
-            name=self.cfg.dataset.subset,
-            split=self.cfg.dataset.split,
+            path=self.cfg.huggingface_dataset_name,
+            name=self.cfg.subset,
+            split=self.cfg.split,
             cache_dir=self.hf_cache_dir_path,
             num_proc=8,
         )
@@ -109,56 +119,81 @@ class CurationDataset(BaseDataset):
             logger,
             f"Post-processing: Segmenting data of length {len(self.tokenized_data)}...",
         )
-        window_size = self.cfg.model.max_length
-        stride = self.cfg.testing.stride
+        window_size = self.global_cfg.model.max_length
+        stride = self.global_cfg.task.next_token_prediction.stride
         assert window_size >= stride, "Window size must be greater than stride"
         log_if_rank_zero(logger, f"Window size: {window_size}, Stride: {stride}")
 
-        total_data_num = len(self.tokenized_data["non_summary_input_ids"])
-
-        # Perform the sliding window segmentation
-        segments_list: List[Dict[str, Any]] = []
-        for i in tqdm.tqdm(
-            range(total_data_num),
-            desc="Segmenting data",
-            disable=not torch.distributed.get_rank() == 0,
-        ):
-            # Combine the non-summary and summary token ids
-            concatenated_token_ids = (
-                self.tokenized_data[i]["non_summary_input_ids"]
-                + self.tokenized_data[i]["summary_input_ids"]
+        segment_cache_dir_path = self.get_segment_cache_dir_path(window_size, stride)
+        if os.path.exists(segment_cache_dir_path):
+            # Load the cached segments
+            log_if_rank_zero(
+                logger, f"Loading cached segments from {segment_cache_dir_path}"
             )
-            # Get the summary token start indices
-            valid_token_start_idx = len(self.tokenized_data[i]["non_summary_input_ids"])
-            # Perform the sliding window segmentation
-            segments: List[Dict[str, Any]] = perform_sliding_window_segmentation(
-                concatenated_token_ids,
-                window_size,
-                stride,
-                valid_token_start_idx=valid_token_start_idx,
+            dataset_of_segments = Dataset.load_from_disk(segment_cache_dir_path)
+        else:
+            # Perform the sliding window segmentation with caching
+            segments_list: List[Dict[str, Any]] = []
+            total_data_num = len(self.tokenized_data["non_summary_input_ids"])
+            is_distributed = torch.distributed.is_initialized()
+            should_disable_tqdm = not (
+                is_distributed and torch.distributed.get_rank() == 0
             )
-            # Filter out the segments whose labels are all masked out
-            segments = [
-                segment
-                for segment in segments
-                if not torch.all(segment["labels"] == INVALID_TOKEN_ID)
-            ]
-            segments_list.extend(segments)
+            for i in tqdm.tqdm(
+                range(total_data_num),
+                desc="Segmenting data",
+                disable=should_disable_tqdm,
+            ):
+                # Combine the non-summary and summary token ids
+                concatenated_token_ids = (
+                    self.tokenized_data[i]["non_summary_input_ids"]
+                    + self.tokenized_data[i]["summary_input_ids"]
+                )
+                # Get the valid token start index
+                valid_token_start_idx = len(
+                    self.tokenized_data[i]["non_summary_input_ids"]
+                )
+                # Perform the sliding window segmentation
+                segments: List[Dict[str, Any]] = perform_sliding_window_segmentation(
+                    concatenated_token_ids,
+                    window_size,
+                    stride,
+                    valid_token_start_idx=valid_token_start_idx,
+                )
 
-        log_if_rank_zero(
-            logger,
-            f"Post-processing: Segmented data into {len(segments_list)} segments",
-        )
+                # Filter out the segments whose labels are all masked out
+                segments = [
+                    segment
+                    for segment in segments
+                    if not torch.all(segment["labels"] == INVALID_TOKEN_ID)
+                ]
 
-        # Transform list of dicts into dict of lists
-        keys_in_segments = segments_list[0].keys()
-        dict_of_lists = {
-            key: [example[key] for example in segments_list] for key in keys_in_segments
-        }
+                # Aggregate the segments to the list
+                segments_list.extend(segments)
 
-        # Save the segmented data into self.tokenized_data
-        self.tokenized_data = Dataset.from_dict(dict_of_lists)
+            log_if_rank_zero(
+                logger,
+                f"Post-processing: Segmented data into {len(segments_list)} segments",
+            )
+
+            # Transform list of dicts into dict of lists
+            keys_in_segments = segments_list[0].keys()
+            dict_of_lists = {
+                key: [example[key] for example in segments_list]
+                for key in keys_in_segments
+            }
+            dataset_of_segments = Dataset.from_dict(dict_of_lists)
+            log_if_rank_zero(
+                logger, f"Saving segmented data to {segment_cache_dir_path}"
+            )
+            # Save the segmented data into self.tokenized_data
+            dataset_of_segments.save_to_disk(segment_cache_dir_path)
+
+        self.tokenized_data = dataset_of_segments
         return None
+
+    def get_segment_cache_dir_path(self, window: int, stride: int) -> str:
+        return os.path.join(self.hf_cache_dir_path, f"segment_cache_{window}_{stride}")
 
 
 class CurationDataCollator(DataCollatorForLanguageModeling):
