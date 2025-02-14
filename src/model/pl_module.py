@@ -68,8 +68,8 @@ class LightningModule(L.LightningModule):
         )(self._compiled_step)
         # For evaluation
         self.test_step_outputs: List[Any] = []
-        # Add cumulative tokens counter as int64 tensor
-        self.cumulative_tokens = torch.tensor(0, dtype=torch.int64, requires_grad=False)
+        # Add cumulative tokens counter as int64 tensor and register it as a buffer
+        self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
 
     def initialize_tokenizer(self) -> ReLlamaTokenizer:
         if self.cfg.model.name == "rellama":
@@ -157,10 +157,10 @@ class LightningModule(L.LightningModule):
         if batch_idx % self.trainer.log_every_n_steps == 0:
             # First gather and sum tokens across processes
             gathered_tokens = self.all_gather(self.cumulative_tokens)
-            # Log the total tokens across all processes
+            # Log the total tokens across all processes with global step
             self.logger.log_metrics(
                 {"cumulative_num_tokens": torch.sum(gathered_tokens)},
-                step=batch_idx,
+                step=self.global_step,
             )
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:

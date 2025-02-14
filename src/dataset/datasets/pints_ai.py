@@ -1,5 +1,6 @@
 from typing import *
 
+import torch
 from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 from transformers import DataCollatorForLanguageModeling
@@ -84,8 +85,10 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         # Update batch with computed values
         batch.update(
             {
-                "avg_char_per_token": avg_char_per_token,
-                "total_valid_tokens_cnt": total_valid_tokens_cnt,
+                "avg_char_per_token": torch.tensor(avg_char_per_token),
+                "total_valid_tokens_cnt": torch.tensor(
+                    total_valid_tokens_cnt, dtype=torch.int64
+                ),
             }
         )
 
