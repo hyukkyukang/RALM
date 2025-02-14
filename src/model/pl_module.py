@@ -71,6 +71,7 @@ class LightningModule(L.LightningModule):
         # Add cumulative tokens counter as int64 tensor and register it as a buffer
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
 
+    @property
     def initialize_tokenizer(self) -> ReLlamaTokenizer:
         if self.cfg.model.name == "rellama":
             tokenizer = ReLlamaTokenizer.from_pretrained(self.cfg.model.base_name)
@@ -155,12 +156,20 @@ class LightningModule(L.LightningModule):
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
         if batch_idx % self.trainer.log_every_n_steps == 0:
+            # Compute a global step that counts how many times `training_step` has actually been called so far.
+            # This is NOT the same as the number of optimizer steps (which is fewer if gradient accumulation > 1).
+            global_training_step = (
+                self.trainer.current_epoch * self.trainer.num_training_batches
+                + batch_idx
+            )
+
             # First gather and sum tokens across processes
             gathered_tokens = self.all_gather(self.cumulative_tokens)
-            # Log the total tokens across all processes with global step
+
+            # Log the total tokens across all processes with that step
             self.logger.log_metrics(
                 {"cumulative_num_tokens": torch.sum(gathered_tokens)},
-                step=self.global_step,
+                step=global_training_step,
             )
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
