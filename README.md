@@ -1,4 +1,4 @@
-# retro
+# Retrieval-augmented Language Model
 
 ## Install dependencies
 Install torch and legacy-cgi (for Python3.13)
@@ -53,3 +53,23 @@ python scripts/dataset/cleanup_dataset.py \
 shuf {cleaned_deduplicated_data_file_path} -o {output_file_path}
 ```
 
+## Training
+```bash
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/pretrain.py \
+    _global.tag=lion_1e-4 \
+    optimizer=lion \
+    lr_scheduler=linear_decay \
+    lr_scheduler.max_learning_rate=1e-4 \
+    training.max_epochs=2 \
+    training.gradient_accumulation_steps=9 \
+    training.per_device_batch_size=38
+```
+
+## Evaluation
+```bash
+python scripts/evaluate.py \
+    task_names='[last_word_prediction, next_token_prediction]' \
+    +ckpt_path=/root/RETRO/runs/retro/lion.ckpt
+    testing.per_device_batch_size=1
+```
