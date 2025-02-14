@@ -1,12 +1,13 @@
 import abc
 import os
+from functools import cached_property
 from typing import *
 
+import torch
 import tqdm
 from datasets import Dataset
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
-import torch
 
 from src.tokenization import ReLlamaTokenizer
 
@@ -15,10 +16,12 @@ class BaseDataset:
     def __init__(
         self,
         cfg: DictConfig,
+        global_cfg: DictConfig,
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Dataset | None = None,
     ):
         self.cfg = cfg
+        self.global_cfg = global_cfg
         self.tokenizer: Union[ReLlamaTokenizer, AutoTokenizer] = tokenizer
         self.raw_data: Dataset | None = None
         self.tokenized_data: Dataset | None = tokenized_data
@@ -34,13 +37,22 @@ class BaseDataset:
             return None
         return self.tokenized_data[idx]
 
+    @cached_property
+    @abc.abstractmethod
+    def collator(self) -> Any:
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @property
+    def name(self) -> str:
+        return self.cfg.name
+
     @property
     def hf_cache_dir_path(self) -> str:
         return os.path.join(
-            self.cfg._global.root_dir_path,
-            self.cfg.dataset.dir_name,
+            self.global_cfg.root_dir_path,
+            self.cfg.dir_name,
             "huggingface",
-            self.cfg.dataset.name,
+            self.cfg.name,
         )
 
     @property
@@ -54,12 +66,18 @@ class BaseDataset:
         if not hasattr(self, "_total_tokens"):
             if self.tokenized_data is None:
                 return 0
+            # Check if distributed is initialized
+            is_distributed = torch.distributed.is_initialized()
+            should_disable_tqdm = not (
+                is_distributed and torch.distributed.get_rank() == 0
+            )
+            # Count the number of tokens
             self._total_tokens = sum(
                 sum(x)
                 for x in tqdm.tqdm(
                     self.tokenized_data["attention_mask"],
                     desc="Counting tokens",
-                    disable=not torch.distributed.get_rank() == 0,
+                    disable=should_disable_tqdm,
                 )
             )
         return self._total_tokens
@@ -107,10 +125,6 @@ class BaseDataset:
     def save_to_disk(self, path: str) -> None:
         self.tokenized_data.save_to_disk(path)
 
-    @classmethod
-    def load_from_disk(
-        cls, cfg: DictConfig, tokenizer: ReLlamaTokenizer, path: str
-    ) -> "BaseDataset":
-        return cls(
-            cfg=cfg, tokenizer=tokenizer, tokenized_data=Dataset.load_from_disk(path)
-        )
+    def load_from_disk(self, path: str) -> None:
+        self.tokenized_data = Dataset.load_from_disk(path)
+        return None

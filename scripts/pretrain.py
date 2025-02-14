@@ -33,11 +33,11 @@ torch._dynamo.config.cache_size_limit = 64
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    tag_prefix = "debug_" if cfg._global.is_debug else ""
+    tag_prefix = "debug_" if cfg.is_debug else ""
     default_root_dir = os.path.join(
-        cfg._global.root_dir_path,
-        cfg._global.log_dir,
-        f"{tag_prefix}{cfg._global.tag}",
+        cfg.root_dir_path,
+        cfg.log_dir,
+        f"{tag_prefix}{cfg.tag}",
     )
 
     # Get git hash
@@ -46,8 +46,8 @@ def main(cfg: DictConfig) -> None:
     log_if_rank_zero(logger, f"Git hash: {cfg.git_hash}")
 
     # Set random seed
-    log_if_rank_zero(logger, f"Setting random seed: {cfg._global.seed}")
-    L.seed_everything(cfg._global.seed, workers=True)
+    log_if_rank_zero(logger, f"Setting random seed: {cfg.seed}")
+    L.seed_everything(cfg.seed, workers=True)
 
     # Initialize lightning module and call prepare_data to figure out the length of the dataset
     data_module = DataModule(cfg=cfg)
@@ -55,7 +55,7 @@ def main(cfg: DictConfig) -> None:
 
     # Compute the total number of training steps for the learning rate scheduler
     total_optimization_steps = (
-        len(data_module)
+        len(data_module.train_dataset)
         // (
             cfg.training.gradient_accumulation_steps
             * cfg.training.per_device_batch_size
@@ -64,7 +64,7 @@ def main(cfg: DictConfig) -> None:
         * cfg.training.max_epochs
     )
     total_training_steps = (
-        len(data_module)
+        len(data_module.train_dataset)
         // (cfg.training.per_device_batch_size * torch.cuda.device_count())
         * cfg.training.max_epochs
     )
@@ -81,7 +81,7 @@ def main(cfg: DictConfig) -> None:
     # Initialize checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=default_root_dir,
-        monitor="loss",
+        monitor="NTP_wikitext_perplexity",
         mode="min",
         save_top_k=1,
         every_n_train_steps=cfg.training.checkpoint_save_steps,
@@ -96,12 +96,15 @@ def main(cfg: DictConfig) -> None:
         max_epochs=cfg.training.max_epochs,
         profiler="simple",
         accelerator="gpu",
+        num_sanity_val_steps=cfg.validation.num_sanity_val_steps,
+        val_check_interval=cfg.validation.val_check_interval,
+        check_val_every_n_epoch=cfg.validation.check_val_every_n_epoch,
         devices=torch.cuda.device_count(),
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.logging_steps,
         default_root_dir=default_root_dir,
         logger=TensorBoardLogger(
-            save_dir=default_root_dir, name=cfg._global.tag, default_hp_metric=False
+            save_dir=default_root_dir, name=cfg.tag, default_hp_metric=False
         ),
         strategy=DDPStrategy(
             timeout=timedelta(hours=4), static_graph=True, gradient_as_bucket_view=True

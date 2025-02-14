@@ -10,12 +10,12 @@ from omegaconf import DictConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
+from src.evaluation.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.next_token_prediction import (
     aggregate_test_step_outputs,
     compute_perplexity_and_bpb,
     evaluate_next_token_prediction,
 )
-from src.evaluation.next_word_prediction import evaluate_last_word_prediction
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
 from src.model.utils import lr_lambda_cosine_decay, lr_lambda_linear_decay
@@ -97,7 +97,7 @@ class LightningModule(L.LightningModule):
         if self.cfg.training.get(
             "use_torch_compile", self.cfg.get("use_torch_compile", False)
         ):
-            if torch.cuda.get_device_capability()[0] >= 7:
+            if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7:
                 log_if_rank_zero(
                     logger,
                     "Compiling the model with torch compile...",
@@ -124,17 +124,21 @@ class LightningModule(L.LightningModule):
     def forward(
         self,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Any:
         # Use inference_mode when not training
         if not self.training:
             with torch.inference_mode():
                 return self.model(
-                    input_ids=input_ids, attention_mask=attention_mask, labels=labels
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    **kwargs,
                 )
         return self.model(
-            input_ids=input_ids, attention_mask=attention_mask, labels=labels
+            input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
 
     def training_step(
@@ -190,27 +194,66 @@ class LightningModule(L.LightningModule):
 
         return None
 
-    def test_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        bsize = len(batch["input_ids"])
-        if self.cfg.testing.name == "last_word_prediction":
-            for b_idx in range(bsize):
-                correct = evaluate_last_word_prediction(
-                    token_ids=batch["input_ids"][b_idx],
-                    last_word=batch["last_word"][b_idx],
-                    tokenizer=self.tokenizer,
-                    model=self.model,
-                    is_analyze=self.cfg.testing.is_analyze,
-                )
-                self.test_step_outputs.append(correct)
-        elif self.cfg.testing.name == "next_token_prediction":
-            loss_sum, valid_tokens_cnt = evaluate_next_token_prediction(
-                token_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"],
-                labels=batch["labels"],
-                model=self.model,
+    def validation_step(
+        self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int
+    ) -> torch.Tensor:
+        b_size = len(batch["input_ids"])
+
+        # Identify the validation dataset
+        val_dataset_name = self.trainer.val_dataloaders[dataloader_idx].dataset.name
+
+        # Lets perform evaluation
+        log_dic = {}
+        if val_dataset_name == "lambada":
+            # Last word prediction
+            accuracy = self._handle_batch_for_last_word_prediction(batch)
+            log_dic = {"LWP_lambada_acc": accuracy}
+        elif val_dataset_name in ["wikitext", "curation"]:
+            # Next token prediction
+            loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
+                batch
             )
-            chars_cnt = batch["total_chars_cnt"]
-            self.test_step_outputs.append([loss_sum, valid_tokens_cnt, chars_cnt])
+            # Compute perplexity and bpb
+            perplexity, bpb = compute_perplexity_and_bpb(
+                loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]
+            )
+            log_dic = {
+                f"NTP_{val_dataset_name}_perplexity": perplexity,
+                f"NTP_{val_dataset_name}_bpb": bpb,
+            }
+        else:
+            raise ValueError(f"Validation step {dataloader_idx} not implemented")
+
+        # Log the results
+        if log_dic:
+            self.log_dict(
+                log_dic,
+                batch_size=b_size,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+            )
+        return None
+
+    def test_step(
+        self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int
+    ) -> torch.Tensor:
+        bsize = len(batch["input_ids"])
+
+        # Identify the test dataset
+        test_dataset_name = self.trainer.test_dataloaders[dataloader_idx].dataset.name
+
+        # Perform evaluation
+        if test_dataset_name == "lambada":
+            accuracy = self._handle_batch_for_last_word_prediction(batch)
+            self.test_step_outputs.append(accuracy * bsize)
+        elif test_dataset_name in ["wikitext", "curation"]:
+            loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
+                batch
+            )
+            self.test_step_outputs.append(
+                [loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]]
+            )
         else:
             raise ValueError(f"Test step {self.cfg.testing.name} not implemented")
         return None
@@ -348,3 +391,45 @@ class LightningModule(L.LightningModule):
         # Backward
         self.manual_backward(loss)
         return None
+
+    def _handle_batch_for_last_word_prediction(
+        self,
+        batch: Dict[str, torch.Tensor],
+    ) -> float:
+        """Last word prediction should be evaluated for each instance in the batch."""
+        bsize = len(batch["input_ids"])
+        is_correct_list: List[bool] = []
+        # last_word_prediction expects no padding
+        for b_idx in range(bsize):
+            # Handle input token ids and target last words
+            assert (
+                type(batch["input_ids"][b_idx]) == list
+            ), "input_ids must be a list (To avoid padding)"
+            batch_token_ids = torch.tensor(batch["input_ids"][b_idx : b_idx + 1]).to(
+                self.device
+            )
+            target_last_words = batch["last_word"][b_idx : b_idx + 1]
+
+            # Evaluate the last word prediction
+            is_correct_list.extend(
+                evaluate_last_word_prediction(
+                    batch_token_ids=batch_token_ids,
+                    target_last_words=target_last_words,
+                    tokenizer=self.tokenizer,
+                    model=self,
+                )
+            )
+        return sum(is_correct_list) / bsize
+
+    def _handle_batch_for_next_token_prediction(
+        self,
+        batch: Dict[str, torch.Tensor],
+    ) -> Tuple[float, int]:
+        """Next token prediction can be evaluated for the whole batch at once."""
+        loss_sum, valid_tokens_cnt = evaluate_next_token_prediction(
+            token_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            labels=batch["labels"],
+            model=self,
+        )
+        return loss_sum, valid_tokens_cnt

@@ -1,6 +1,0 @@
-name: next_token_prediction
-
-num_workers: 8
-per_device_batch_size: 10
-stride: 512
-is_analyze: false

@@ -1,0 +1,4 @@
+last_word_prediction:
+  name: last_word_prediction
+  dataset_names:
+    - lambada

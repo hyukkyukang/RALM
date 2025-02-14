@@ -1,5 +1,6 @@
 import logging
 import os
+from functools import cached_property
 from typing import *
 
 import hkkang_utils.file as file_utils
@@ -22,16 +23,21 @@ class LambadaDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
+        global_cfg: DictConfig,
         tokenizer: ReLlamaTokenizer,
         tokenized_data: Dataset | None = None,
     ):
-        super().__init__(cfg, tokenizer, tokenized_data)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data)
+
+    @cached_property
+    def collator(self) -> "LambadaDataCollator":
+        return LambadaDataCollator(tokenizer=self.tokenizer, mlm=False)
 
     @property
     def tokenized_cache_path(self) -> str:
         # Get the parents' tokenized cache path
         parent_tokenized_cache_path: str = super().tokenized_cache_path
-        suffix: str = "gpt2_author" if self.cfg.dataset.use_gpt2_author_data else "hf"
+        suffix: str = "gpt2_author" if self.cfg.use_gpt2_author_data else "hf"
         return os.path.join(parent_tokenized_cache_path, suffix)
 
     def _load_dataset(self) -> Dataset:
@@ -40,20 +46,20 @@ class LambadaDataset(BaseDataset):
         Returns:
             Dataset: Processed dataset with text split into context and last word.
         """
-        if self.cfg.dataset.use_gpt2_author_data:
+        if self.cfg.use_gpt2_author_data:
             # Load the raw dataset from local file
             local_file_path = os.path.join(
-                self.cfg._global.root_dir_path,
-                self.cfg.dataset.dir_name,
-                self.cfg.dataset.gpt_2_author_file_name,
+                self.global_cfg.root_dir_path,
+                self.cfg.dir_name,
+                self.cfg.gpt_2_author_file_name,
             )
             dataset: List[Dict[str, Any]] = file_utils.read_jsonl_file(local_file_path)
             dataset = Dataset.from_list(dataset)
         else:
             # Load the raw dataset from Hugging Face
             dataset = load_dataset(
-                path=self.cfg.dataset.huggingface_dataset_name,
-                split=self.cfg.dataset.split,
+                path=self.cfg.huggingface_dataset_name,
+                split=self.cfg.split,
                 cache_dir=self.hf_cache_dir_path,
                 num_proc=8,
             )

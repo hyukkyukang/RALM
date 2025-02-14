@@ -1,5 +1,0 @@
-name: last_word_prediction
-
-num_workers: 8
-per_device_batch_size: 1
-is_analyze: false

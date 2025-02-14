@@ -1,0 +1,7 @@
+per_device_batch_size: 1
+num_workers: 8
+is_analyze: false
+
+task_names:
+  - last_word_prediction
+  - next_token_prediction
