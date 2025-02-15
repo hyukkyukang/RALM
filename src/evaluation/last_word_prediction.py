@@ -16,7 +16,8 @@ logger = logging.getLogger("NextWordPrediction")
 def is_model_compiled(model: Union[L.LightningModule, AutoModelForCausalLM]) -> bool:
     if isinstance(model, L.LightningModule):
         if (
-            model.cfg.use_torch_compile
+            "use_torch_compile" in model.cfg
+            and model.cfg.use_torch_compile
             and torch.cuda.is_available()
             and torch.cuda.get_device_capability()[0] >= 7
         ):
@@ -67,14 +68,11 @@ def predict_next_tokens(
         # Find the token with the highest probability and not a stopword
         current_input_token_ids: List[List[int]] = [[] for _ in range(bsize)]
         for b_idx in range(bsize):
-            predicted_token_idx = None
             predicted_token_id = None
-            for cand_idx, candidate_token_id in enumerate(
-                line_encoded_candidates[b_idx]
-            ):
-                if candidate_token_id not in STOPWORDS_FROM_GPT2:
+            for candidate_token_id in line_encoded_candidates[b_idx]:
+                candidate_token = tokenizer.decode(candidate_token_id).strip()
+                if candidate_token not in STOPWORDS_FROM_GPT2:
                     # Select this candidate token as the predicted token
-                    predicted_token_idx = cand_idx
                     predicted_token_id = candidate_token_id
                     break
             assert predicted_token_id is not None, "No valid candidate found"
@@ -126,7 +124,7 @@ def evaluate_last_word_prediction(
             batch_predicted_words[idx] = [""]
     # Compare the predicted words with the target last words
     batch_is_correct: List[bool] = [
-        predicted_words[-1] == last_word
+        predicted_words[0] == last_word
         for predicted_words, last_word in zip(batch_predicted_words, target_last_words)
     ]
     # Check if the predicted word is the same as the last word

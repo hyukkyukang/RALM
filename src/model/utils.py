@@ -1,6 +1,13 @@
+import logging
 import math
+from typing import *
 
 import torch
+from tensordict import TensorDict
+
+from src.utils import log_if_rank_zero
+
+logger = logging.getLogger("ModelUtils")
 
 
 # Custom weight initialization function
@@ -16,6 +23,32 @@ def initialize_weights(module):
     elif isinstance(module, torch.nn.LayerNorm):
         torch.nn.init.ones_(module.weight)
         torch.nn.init.zeros_(module.bias)
+
+
+def get_compile_decorator(
+    use_compile: bool = True, fullgraph: bool = False, mode: str = "default"
+):
+    """Returns torch.compile decorator if GPU is capable and use_compile is True, otherwise returns a no-op decorator"""
+    if (
+        use_compile
+        and torch.cuda.is_available()
+        and torch.cuda.get_device_capability()[0] >= 7
+    ):
+        log_if_rank_zero(
+            logger, f"Compiling the module with torch compile in {mode} mode..."
+        )
+        return torch.compile(fullgraph=fullgraph, mode=mode)
+    return lambda x: x  # no-op decorator
+
+
+def add_to_tensor_dict_safely(
+    tensor_dict: TensorDict, key: str, tensor: torch.Tensor
+) -> TensorDict:
+    """
+    Add a tensor to a dictionary safely.
+    """
+    tensor_dict[key] = tensor_dict.get(key, torch.tensor(0)) + tensor
+    return tensor_dict
 
 
 # Define a TorchScript-compatible function for the learning rate schedule

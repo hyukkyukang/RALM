@@ -20,6 +20,7 @@ logger = logging.getLogger("Evaluation")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Make use_torch_compile to False
@@ -32,6 +33,7 @@ def main(cfg: DictConfig) -> None:
         lightning_module = LightningModule.load_from_checkpoint(
             cfg.ckpt_path, map_location="cpu", training=cfg.training
         )
+        lightning_module.cfg = cfg
     elif cfg.model.name == "gpt":
         lightning_module = LightningModule(cfg=cfg).to("cpu")
     else:
@@ -39,7 +41,7 @@ def main(cfg: DictConfig) -> None:
     lightning_module.eval()
 
     # Load data module and model
-    data_module = DataModule(cfg=cfg)
+    data_module = DataModule(cfg=cfg, is_test=True)
 
     # Create trainer
     trainer = L.Trainer(
@@ -50,11 +52,6 @@ def main(cfg: DictConfig) -> None:
             timeout=timedelta(hours=5), static_graph=True, gradient_as_bucket_view=True
         ),
     )
-
-    # Set configs
-    if "testing" not in lightning_module.cfg:
-        add_config(lightning_module.cfg, "testing", DictConfig({}))
-    overwrite_config(cfg.testing, lightning_module.cfg.testing)
 
     # Evaluate
     trainer.test(lightning_module, datamodule=data_module)

@@ -79,7 +79,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/pretrain.py \
 ## Evaluation
 ```bash
 python scripts/evaluate.py \
-    task_names='[last_word_prediction, next_token_prediction]' \
-    +ckpt_path=/root/RETRO/runs/retro/lion.ckpt
+    testing.task_names="[last_word_prediction, next_token_prediction]" \
+    +ckpt_path=/root/RETRO/runs/retro/lion.ckpt \
     testing.per_device_batch_size=1
 ```
