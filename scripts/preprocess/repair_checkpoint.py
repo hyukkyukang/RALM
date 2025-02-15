@@ -29,7 +29,7 @@ def repair_checkpoint(path):
     ckpt[MODEL_STATE_DICT_KEY] = out_state_dict
 
     # Make use_torch_compile to False
-    ckpt["hyper_parameters"]["training"]["use_torch_compile"] = False
+    ckpt["hyper_parameters"]["use_torch_compile"] = False
 
     # Save the checkpoint
     print(f"Saving checkpoint to {path}")
@@ -37,6 +37,6 @@ def repair_checkpoint(path):
 
 
 if __name__ == "__main__":
-    checkpoint_path = "/root/RETRO/runs/adafactor/adafactor.ckpt"
+    checkpoint_path = "/root/RETRO/runs/lion_1e-3/last.ckpt"
     repair_checkpoint(checkpoint_path)
     print("Done!")
