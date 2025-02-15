@@ -24,7 +24,7 @@ class PintsAIDataset(BaseDataset):
     @cached_property
     def collator(self) -> "PintsAIDataCollator":
         return PintsAIDataCollator(
-            tokenizer=self.tokenizer, mlm=False, max_length=self.cfg.model.max_length
+            tokenizer=self.tokenizer, mlm=False, max_length=self.global_cfg.model.max_length
         )
 
     def _load_dataset(self) -> Dataset:
