@@ -12,6 +12,7 @@ lightning
 tensorboard
 standard-imghdr # Temporary fix the tensorboard error
 lion-pytorch
+tensordict
 
 # packages for dataset
 ftfy

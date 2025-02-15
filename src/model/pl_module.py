@@ -7,38 +7,27 @@ import torch
 import transformers
 from lion_pytorch import Lion
 from omegaconf import DictConfig
+from tensordict import TensorDict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
 from src.evaluation.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.next_token_prediction import (
-    aggregate_test_step_outputs,
     compute_perplexity_and_bpb,
     evaluate_next_token_prediction,
 )
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import lr_lambda_cosine_decay, lr_lambda_linear_decay
+from src.model.utils import (
+    add_to_tensor_dict_safely,
+    get_compile_decorator,
+    lr_lambda_cosine_decay,
+    lr_lambda_linear_decay,
+)
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("LightningModule")
-
-
-def get_compile_decorator(
-    use_compile: bool = True, fullgraph: bool = False, mode: str = "default"
-):
-    """Returns torch.compile decorator if GPU is capable and use_compile is True, otherwise returns a no-op decorator"""
-    if (
-        use_compile
-        and torch.cuda.is_available()
-        and torch.cuda.get_device_capability()[0] >= 7
-    ):
-        log_if_rank_zero(
-            logger, f"Compiling the module with torch compile in {mode} mode..."
-        )
-        return torch.compile(fullgraph=fullgraph, mode=mode)
-    return lambda x: x  # no-op decorator
 
 
 class LightningModule(L.LightningModule):
@@ -67,11 +56,12 @@ class LightningModule(L.LightningModule):
             fullgraph=False,
         )(self._compiled_step)
         # For evaluation
-        self.test_step_outputs: List[Any] = []
+        self.test_step_outputs: TensorDict = TensorDict({})
         # Add cumulative tokens counter as int64 tensor and register it as a buffer
-        self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
+        self.register_buffer(
+            "cumulative_tokens", torch.tensor(0, dtype=torch.int64), persistent=False
+        )
 
-    @property
     def initialize_tokenizer(self) -> ReLlamaTokenizer:
         if self.cfg.model.name == "rellama":
             tokenizer = ReLlamaTokenizer.from_pretrained(self.cfg.model.base_name)
@@ -236,7 +226,7 @@ class LightningModule(L.LightningModule):
         return None
 
     def test_step(
-        self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int
+        self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
         bsize = len(batch["input_ids"])
 
@@ -246,50 +236,73 @@ class LightningModule(L.LightningModule):
         # Perform evaluation
         if test_dataset_name == "lambada":
             accuracy = self._handle_batch_for_last_word_prediction(batch)
-            self.test_step_outputs.append(accuracy * bsize)
+            add_to_tensor_dict_safely(
+                self.test_step_outputs, "LWP_lambada_acc_sum", accuracy * bsize
+            )
+            add_to_tensor_dict_safely(
+                self.test_step_outputs, "LWP_lambada_acc_cnt", bsize
+            )
         elif test_dataset_name in ["wikitext", "curation"]:
             loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
                 batch
             )
-            self.test_step_outputs.append(
-                [loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]]
+            add_to_tensor_dict_safely(
+                self.test_step_outputs, f"NTP_{test_dataset_name}_loss_sum", loss_sum
+            )
+            add_to_tensor_dict_safely(
+                self.test_step_outputs,
+                f"NTP_{test_dataset_name}_valid_tokens_cnt",
+                valid_tokens_cnt,
+            )
+            add_to_tensor_dict_safely(
+                self.test_step_outputs,
+                f"NTP_{test_dataset_name}_total_chars_cnt",
+                batch["total_chars_cnt"],
             )
         else:
             raise ValueError(f"Test step {self.cfg.testing.name} not implemented")
         return None
 
     def on_test_epoch_end(self) -> None:
-        # Accumulate the step outputs over all the test steps and multi-processes
-        gathered_step_outpus: List[torch.Tensor] = self.all_gather(
-            self.test_step_outputs
-        )
-        if self.cfg.testing.name == "last_word_prediction":
-            # Aggregate the accuracy over all the test steps and multi-processes
-            total_items = sum(len(item) for item in gathered_step_outpus)
-            total_sum = (
-                torch.stack([item.sum() for item in gathered_step_outpus]).sum().item()
-            )
-            # Calculate the accuracy
-            avg_accuracy = total_sum / total_items
-            log_if_rank_zero(logger, f"Accuracy: {avg_accuracy} (Total: {total_items})")
-        elif self.cfg.testing.name == "next_token_prediction":
-            # Aggregate the loss sum, valid tokens cnt, and chars cnt over all the test steps and multi-processes
-            total_loss_sum, total_valid_tokens_cnt, total_chars_cnt = (
-                aggregate_test_step_outputs(gathered_step_outpus, self.device)
-            )
-            # Calculate the perplexity and bpb
-            perplexity, bpb = compute_perplexity_and_bpb(
-                total_loss_sum, total_valid_tokens_cnt, total_chars_cnt
-            )
-            # Log the results
-            log_if_rank_zero(
-                logger,
-                f"Perplexity: {perplexity} (Total tokens: {total_valid_tokens_cnt})",
-            )
-            log_if_rank_zero(
-                logger,
-                f"Bits per byte: {bpb} (Total characters: {total_chars_cnt})",
-            )
+        # Gather and sum over all processes
+        gathered_step_outpus: TensorDict = self.all_gather(self.test_step_outputs)
+        for key in gathered_step_outpus.keys():
+            gathered_step_outpus[key] = gathered_step_outpus[key].sum()
+        # Compute the average metrics for each task
+        for task_name in self.cfg.testing.task_names:
+            if task_name == "last_word_prediction":
+                for dataset_name in self.cfg.task[task_name].dataset_names:
+                    # Calculate the accuracy
+                    avg_accuracy = (
+                        gathered_step_outpus[f"LWP_{dataset_name}_acc_sum"]
+                        / gathered_step_outpus[f"LWP_{dataset_name}_acc_cnt"]
+                    )
+                    log_if_rank_zero(
+                        logger,
+                        f"LWP_{dataset_name} Accuracy: {avg_accuracy} (Total: {gathered_step_outpus[f'LWP_{dataset_name}_acc_cnt']})",
+                    )
+            elif task_name == "next_token_prediction":
+                for dataset_name in self.cfg.task[task_name].dataset_names:
+                    # Calculate the perplexity and bpb
+                    perplexity, bpb = compute_perplexity_and_bpb(
+                        total_loss_sum=gathered_step_outpus[
+                            f"NTP_{dataset_name}_loss_sum"
+                        ],
+                        total_valid_tokens_cnt=gathered_step_outpus[
+                            f"NTP_{dataset_name}_valid_tokens_cnt"
+                        ],
+                        total_chars_cnt=gathered_step_outpus[
+                            f"NTP_{dataset_name}_total_chars_cnt"
+                        ],
+                    )
+                    log_if_rank_zero(
+                        logger,
+                        f"NTP_{dataset_name} Perplexity: {perplexity} (Total tokens: {gathered_step_outpus[f'NTP_{dataset_name}_valid_tokens_cnt']})",
+                    )
+                    log_if_rank_zero(
+                        logger,
+                        f"NTP_{dataset_name} Bits per byte: {bpb} (Total characters: {gathered_step_outpus[f'NTP_{dataset_name}_total_chars_cnt']})",
+                    )
         return None
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:

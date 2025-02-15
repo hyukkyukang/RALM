@@ -193,7 +193,9 @@ class CurationDataset(BaseDataset):
         return None
 
     def get_segment_cache_dir_path(self, window: int, stride: int) -> str:
-        return os.path.join(self.hf_cache_dir_path, f"segment_cache_{window}_{stride}")
+        return os.path.join(
+            self.tokenized_cache_path, f"segment_cache_{window}_{stride}"
+        )
 
 
 class CurationDataCollator(DataCollatorForLanguageModeling):
