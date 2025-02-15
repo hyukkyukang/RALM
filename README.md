@@ -15,6 +15,9 @@ pip install -r requirements.txt
 ### Download the Lambada dataset
 1. Download the Lambada dataset used in GPT-2 paper from [here](https://openaipublic.blob.core.windows.net/gpt-2/data/lambada_test.jsonl).
 2. Move the file to `data/lambada_gpt2_author.jsonl`.
+```bash
+wget -O data/lambada_gpt2_author.jsonl https://openaipublic.blob.core.windows.net/gpt-2/data/lambada_test.jsonl
+```
 
 ### Download the OpenWebText dataset
 1. Download the deduplicated URLs from [jcpeterson](https://mega.nz/#F!EZZD0YwJ!9_PlEQzdMVLaNdKv_ICNVQ!cc4RgQQZ).

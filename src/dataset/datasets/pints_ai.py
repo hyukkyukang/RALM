@@ -23,7 +23,9 @@ class PintsAIDataset(BaseDataset):
 
     @cached_property
     def collator(self) -> "PintsAIDataCollator":
-        return PintsAIDataCollator(tokenizer=self.tokenizer, mlm=False)
+        return PintsAIDataCollator(
+            tokenizer=self.tokenizer, mlm=False, max_length=self.cfg.model.max_length
+        )
 
     def _load_dataset(self) -> Dataset:
         # Filter out empty strings
@@ -38,13 +40,10 @@ class PintsAIDataset(BaseDataset):
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         texts = [str(text) if text is not None else "" for text in examples["text"]]
-        # TODO: Need to remove the truncation.
-        # TODO: Perform tokenization and then truncate during batching.
         return self.tokenizer(texts)
 
     def _run_post_processing(self) -> None:
         pass
-
 
 class PintsAIDataCollator(DataCollatorForLanguageModeling):
     """A custom data collator for ReLLama that extends the HuggingFace DataCollatorForLanguageModeling.
@@ -53,7 +52,7 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         1. Track character counts for each sequence
     """
 
-    def __init__(self, tokenizer: Any, mlm: bool = False) -> None:
+    def __init__(self, tokenizer: Any, mlm: Optional[bool] = False, max_length: Optional[int]=None) -> None:
         """Initialize the ReLLama data collator.
 
         Args:
@@ -61,6 +60,7 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
             mlm: Whether to use masked language modeling (default: False)
         """
         super().__init__(tokenizer=tokenizer, mlm=mlm)
+        self.max_length = max_length
 
     def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Process a batch of examples. Add character counts for each sequence, after collation by the parent class.
@@ -73,6 +73,12 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
                 - All fields from parent collator (input_ids, labels, etc.)
                 - char_counts: List of character counts for each sequence
         """
+        # Truncate the input_ids and attention_mask to the max length
+        if self.max_length is not None:
+            for example in examples:
+                example["input_ids"] = example["input_ids"][: self.max_length]
+                example["attention_mask"] = example["attention_mask"][: self.max_length]
+
         # First apply the parent class collation
         batch = super().__call__(examples)
 

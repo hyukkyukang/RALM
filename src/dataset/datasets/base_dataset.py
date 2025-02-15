@@ -118,7 +118,10 @@ class BaseDataset:
             ]
             # Tokenize the data
             self.tokenized_data = self.raw_data.map(
-                self._tokenization_fn, batched=batched, remove_columns=remove_columns
+                self._tokenization_fn,
+                batched=batched,
+                remove_columns=remove_columns,
+                num_proc=64,
             )
         return None
 
