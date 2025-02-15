@@ -86,7 +86,7 @@ def main(cfg: DictConfig) -> None:
         save_top_k=1,
         every_n_train_steps=cfg.training.checkpoint_save_steps,
         save_last=True,
-        save_on_train_epoch_end=True,
+        save_on_train_epoch_end=False,
         enable_version_counter=True,
     )
 

@@ -3,7 +3,14 @@
 ## Install dependencies
 Install torch and legacy-cgi (for Python3.13)
 ```bash
-pip install torch legacy-cgi
+pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu126
+pip install legacy-cgi
+```
+
+Install flash-attention
+```bash
+wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiTRUE-cp313-cp313-linux_x86_64.whl
+pip install flash_attn-2.7.4.post1+cu12torch2.6cxx11abiTRUE-cp313-cp313-linux_x86_64.whl
 ```
 
 Install other dependencies

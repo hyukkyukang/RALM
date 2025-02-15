@@ -172,7 +172,8 @@ class LightningModule(L.LightningModule):
 
             # Log the total tokens across all processes with that step
             self.logger.log_metrics(
-                {"cumulative_num_tokens": torch.sum(gathered_tokens)},
+                {"cumulative_num_tokens": torch.sum(gathered_tokens),
+                 "global_step": self.global_step},
                 step=global_training_step,
             )
 
@@ -232,6 +233,7 @@ class LightningModule(L.LightningModule):
                 on_step=False,
                 on_epoch=True,
                 sync_dist=True,
+                add_dataloader_idx=False,
             )
         return None
 

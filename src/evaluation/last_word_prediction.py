@@ -120,6 +120,11 @@ def evaluate_last_word_prediction(
         basic_tokenizer.tokenize(generated_texts)
         for generated_texts in batch_generated_texts
     ]
+    # Handle the case where the predicted words are empty
+    for idx, predicted_words in enumerate(batch_predicted_words):
+        if not predicted_words:
+            batch_predicted_words[idx] = [""]
+    # Compare the predicted words with the target last words
     batch_is_correct: List[bool] = [
         predicted_words[-1] == last_word
         for predicted_words, last_word in zip(batch_predicted_words, target_last_words)
