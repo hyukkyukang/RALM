@@ -56,8 +56,7 @@ class LightningModule(L.LightningModule):
             fullgraph=False,
         )(self._compiled_step)
         # For evaluation
-        self.register_buffer("test_step_outputs", TensorDict({}), persistent=False)
-        # Add cumulative tokens counter as int64 tensor and register it as a buffer
+        self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
 
     def initialize_tokenizer(self) -> ReLlamaTokenizer:

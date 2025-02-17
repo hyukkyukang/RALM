@@ -81,6 +81,7 @@ def main(cfg: DictConfig) -> None:
         total_dataset_size=len(data_module.train_dataset),
         per_device_batch_size=cfg.training.per_device_batch_size,
         num_gpus=torch.cuda.device_count(),
+        gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
         max_epochs=cfg.training.max_epochs,
     )
     total_training_steps = get_total_training_steps(
