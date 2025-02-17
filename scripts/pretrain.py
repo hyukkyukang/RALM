@@ -1,16 +1,18 @@
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
-
+import glob
 import logging
 import os
 from datetime import timedelta
+from typing import *
 
 import git
 import hkkang_utils.misc as misc_utils
 import hydra
 import lightning as L
 import torch
+import tqdm
 from lightning.pytorch.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
@@ -22,6 +24,7 @@ from omegaconf import DictConfig
 
 from src.dataset import DataModule
 from src.model import LightningModule
+from src.model.utils import repair_checkpoint
 from src.utils import add_config, log_if_rank_zero
 
 logger = logging.getLogger("PL_Trainer")
@@ -153,34 +156,29 @@ def main(cfg: DictConfig) -> None:
 
     # Rename the modules in the checkpoint when using torch compile
     # For the main process with rank 0 only
+    is_the_main_process = (
+        not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
+    )
     if (
-        torch.distributed.get_rank() == 0
+        is_the_main_process
         and cfg.use_torch_compile
         and torch.cuda.get_device_capability()[0] >= 7
     ):
-        last_checkpoint_path = os.path.join(
-            default_root_dir, f"version_{trainer.logger.version}", "last.ckpt"
+        # Find all files ending with .ckpt in the default_root_dir
+        ckpt_file_paths: List[str] = glob.glob(os.path.join(default_root_dir, "*.ckpt"))
+        log_if_rank_zero(
+            logger, f"Found {len(ckpt_file_paths)} ckpt files in {default_root_dir}"
         )
-        print(
-            "checkpoint_callback.best_model_path:", checkpoint_callback.best_model_path
+        # For all ckpt files, repair the modules
+        for ckpt_file_path in tqdm.tqdm(
+            ckpt_file_paths, desc="Repairing checkpoints..."
+        ):
+            repair_checkpoint(ckpt_file_path)
+        log_if_rank_zero(
+            logger, f"{len(ckpt_file_paths)} checkpoints saved successfully!"
         )
-        if os.path.exists(last_checkpoint_path):
-            log_if_rank_zero(
-                logger,
-                f"Renaming the modules in the checkpoint ({last_checkpoint_path}) for torch compile...",
-            )
-            # Load the checkpoint
-            checkpoint = torch.load(last_checkpoint_path)
-            # Repair the checkpoint
-            checkpoint["state_dict"] = {
-                k.replace("._orig_mod.", "."): v
-                for k, v in checkpoint["state_dict"].items()
-            }
-            # Save the repaired checkpoint
-            torch.save(checkpoint, last_checkpoint_path)
-            log_if_rank_zero(logger, "Checkpoint saved successfully!")
-        else:
-            log_if_rank_zero(logger, "No checkpoint found to rename.")
+    else:
+        log_if_rank_zero(logger, f"No checkpoint found to rename in {default_root_dir}")
 
     return None
 

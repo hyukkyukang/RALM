@@ -430,7 +430,7 @@ class LightningModule(L.LightningModule):
                     batch_token_ids=batch_token_ids,
                     target_last_words=target_last_words,
                     tokenizer=self.tokenizer,
-                    model=self,
+                    model=self.model._orig_mod,
                 )
             )
         return sum(is_correct_list) / bsize
@@ -444,6 +444,6 @@ class LightningModule(L.LightningModule):
             token_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
             labels=batch["labels"],
-            model=self,
+            model=self.model._orig_mod,
         )
         return loss_sum, valid_tokens_cnt
