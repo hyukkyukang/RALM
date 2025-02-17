@@ -4,15 +4,12 @@ from functools import cached_property
 from typing import *
 
 import hkkang_utils.file as file_utils
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from omegaconf import DictConfig
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import split_text_into_context_and_last_word
 from src.tokenization import ReLlamaTokenizer
-from src.utils import log_if_rank_zero
-
-logger = logging.getLogger("LambadaDataset")
 
 
 class LambadaDataset(BaseDataset):
@@ -40,7 +37,11 @@ class LambadaDataset(BaseDataset):
         suffix: str = "gpt2_author" if self.cfg.use_gpt2_author_data else "hf"
         return os.path.join(parent_tokenized_cache_path, suffix)
 
-    def _load_dataset(self) -> Dataset:
+    @property
+    def post_process_cache_path(self) -> str:
+        return os.path.join(self.tokenized_cache_path, "lambada_post_processed")
+
+    def load_dataset(self) -> Dataset:
         """Loads and preprocesses the LAMBADA dataset.
 
         Returns:
@@ -48,7 +49,7 @@ class LambadaDataset(BaseDataset):
         """
         if self.cfg.use_gpt2_author_data:
             # Load the raw dataset from local file
-            local_file_path = os.path.join(
+            local_file_path: str = os.path.join(
                 self.global_cfg.root_dir_path,
                 self.cfg.dir_name,
                 self.cfg.gpt_2_author_file_name,
@@ -57,29 +58,22 @@ class LambadaDataset(BaseDataset):
             dataset = Dataset.from_list(dataset)
         else:
             # Load the raw dataset from Hugging Face
-            dataset = load_dataset(
-                path=self.cfg.huggingface_dataset_name,
-                split=self.cfg.split,
-                cache_dir=self.hf_cache_dir_path,
-                num_proc=8,
-            )
-        log_if_rank_zero(
-            logger,
-            f"Splitting {len(dataset)} text into context and last word...",
-        )
-        # Process each example by splitting text into context and last word
-        dataset = dataset.map(
-            lambda x: split_text_into_context_and_last_word(x["text"]),
-            batched=False,
-        )
+            dataset: Dataset = super().load_dataset()
         return dataset
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         texts = [str(text) if text is not None else "" for text in examples["context"]]
         return self.tokenizer(texts)
 
-    def _run_post_processing(self) -> None:
-        pass
+    def run_pre_processing(self) -> None:
+        self.raw_data = self.raw_data.map(
+            lambda x: split_text_into_context_and_last_word(x["text"]),
+            batched=False,
+        )
+        return None
+
+    def run_post_processing(self, *args, **kwargs) -> None:
+        return None
 
 
 class LambadaDataCollator:

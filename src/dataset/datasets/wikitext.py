@@ -4,7 +4,7 @@ from functools import cached_property
 from typing import *
 
 import torch
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
@@ -31,32 +31,30 @@ class WikiTextDataset(BaseDataset):
     def collator(self) -> "WikiTextDataCollator":
         return WikiTextDataCollator(tokenizer=self.tokenizer)
 
-    def _load_dataset(self) -> Dataset:
-        dataset = load_dataset(
-            path=self.cfg.huggingface_dataset_name,
-            name=self.cfg.subset,
-            split=self.cfg.split,
-            cache_dir=self.hf_cache_dir_path,
-            num_proc=8,
+    @property
+    def post_process_cache_path(self) -> str:
+        window: int = self.global_cfg.model.max_length
+        stride: int = self.global_cfg.task.next_token_prediction.stride
+        return os.path.join(
+            self.tokenized_cache_path, f"segment_cache_{window}_{stride}"
         )
-        # Combine all texts into a single string
-        combined_text = "\n\n".join(dataset["text"])
-        return Dataset.from_dict({"text": [combined_text]})
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         return self.tokenizer(examples["text"], truncation=False)
 
-    def _run_post_processing(self) -> None:
+    def run_pre_processing(self) -> None:
+        # Combine all texts into a single string
+        combined_text = "\n\n".join(self.raw_data["text"])
+        self.raw_data = Dataset.from_dict({"text": [combined_text]})
+        return None
+
+    def run_post_processing(self) -> None:
         """
         Must call this function after tokenization, and before passing to the inference model.
         Segment the text as a sliding window.
         The last segment maybe padded with special tokens.
         Then save the segmented data into self.tokenized_data as Dataset type.
         """
-        log_if_rank_zero(
-            logger,
-            f"Post-processing: Segmenting data of length {len(self.tokenized_data)}...",
-        )
         window_size = self.global_cfg.model.max_length
         stride = self.global_cfg.task.next_token_prediction.stride
         assert window_size >= stride, "Window size must be greater than stride"
@@ -66,43 +64,20 @@ class WikiTextDataset(BaseDataset):
         assert len(self.tokenized_data) == 1, "We assume all the text is concatenated."
         token_ids = self.tokenized_data["input_ids"][0]
 
-        segment_cache_dir_path = self.get_segment_cache_dir_path(window_size, stride)
-        if os.path.exists(segment_cache_dir_path):
-            # Load the cached segments
-            log_if_rank_zero(
-                logger, f"Loading cached segments from {segment_cache_dir_path}"
-            )
-            dataset_of_segments = Dataset.load_from_disk(segment_cache_dir_path)
-        else:
-            # Perform the sliding window segmentation
-            segmented_data: List[Dict[str, Any]] = perform_sliding_window_segmentation(
-                token_ids, window_size, stride
-            )
-            log_if_rank_zero(
-                logger,
-                f"Post-processing: Segmented data into {len(self.tokenized_data)} segments",
-            )
+        # Perform the sliding window segmentation
+        segmented_data: List[Dict[str, Any]] = perform_sliding_window_segmentation(
+            token_ids, window_size, stride
+        )
 
-            # Transform list of dicts into dict of lists
-            dict_of_lists = {
-                key: [example[key] for example in segmented_data]
-                for key in segmented_data[0].keys()
-            }
-            dataset_of_segments = Dataset.from_dict(dict_of_lists)
-            log_if_rank_zero(
-                logger, f"Saving {len(dataset_of_segments)} segmented data to {segment_cache_dir_path}"
-            )
-            # Save the segmented data into self.tokenized_data
-            dataset_of_segments.save_to_disk(segment_cache_dir_path)
+        # Transform list of dicts into dict of lists
+        dict_of_lists = {
+            key: [example[key] for example in segmented_data]
+            for key in segmented_data[0].keys()
+        }
 
         # Save the segmented data into self.tokenized_data
-        self.tokenized_data = dataset_of_segments
+        self.post_processed_data = Dataset.from_dict(dict_of_lists)
         return None
-
-    def get_segment_cache_dir_path(self, window: int, stride: int) -> str:
-        return os.path.join(
-            self.tokenized_cache_path, f"segment_cache_{window}_{stride}"
-        )
 
 
 class WikiTextDataCollator:

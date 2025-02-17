@@ -1,15 +1,19 @@
 import abc
+import logging
 import os
 from functools import cached_property
 from typing import *
 
-import torch
+import hkkang_utils.concurrent as concurrent_utils
 import tqdm
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
 from src.tokenization import ReLlamaTokenizer
+from src.utils import log_if_rank_zero
+
+logger = logging.getLogger("BaseDataset")
 
 
 class BaseDataset:
@@ -19,27 +23,54 @@ class BaseDataset:
         global_cfg: DictConfig,
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Dataset | None = None,
+        post_processed_data: Dataset | None = None,
     ):
         self.cfg = cfg
         self.global_cfg = global_cfg
         self.tokenizer: Union[ReLlamaTokenizer, AutoTokenizer] = tokenizer
+        # Dataset objects from Hugging Face or local files
         self.raw_data: Dataset | None = None
+        # Dataset objects that is tokenized
         self.tokenized_data: Dataset | None = tokenized_data
-        self.is_post_processed: bool = False
+        # Dataset objects that is post-processed after tokenization
+        self.post_processed_data: Dataset | None = post_processed_data
 
     def __len__(self):
-        if self.tokenized_data is None:
+        if self.post_processed_data is None:
             return 0
-        return len(self.tokenized_data)
+        return len(self.post_processed_data)
 
     def __getitem__(self, idx: int) -> Any:
-        if self.tokenized_data is None:
+        if self.post_processed_data is None:
             return None
-        return self.tokenized_data[idx]
+        return self.post_processed_data[idx]
 
     @cached_property
     @abc.abstractmethod
     def collator(self) -> Any:
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @property
+    @abc.abstractmethod
+    def post_process_cache_path(self) -> str:
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @abc.abstractmethod
+    def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @abc.abstractmethod
+    def run_pre_processing(self, *args, **kwargs) -> None:
+        """Run pre-prcoessing on the raw data (i.e., before tokenization)
+        Return None if no pre-processing is needed
+        """
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @abc.abstractmethod
+    def run_post_processing(self, *args, **kwargs) -> None:
+        """Run post-processing on the tokenized data (i.e., after tokenization)
+        Return None if no post-processing is needed
+        """
         raise NotImplementedError("Subclasses must implement this method")
 
     @property
@@ -66,50 +97,49 @@ class BaseDataset:
         if not hasattr(self, "_total_tokens"):
             if self.tokenized_data is None:
                 return 0
-            # Check if distributed is initialized
-            is_distributed = torch.distributed.is_initialized()
-            should_disable_tqdm = not (
-                is_distributed and torch.distributed.get_rank() == 0
-            )
-            # Count the number of tokens
-            self._total_tokens = sum(
-                sum(x)
-                for x in tqdm.tqdm(
-                    self.tokenized_data["attention_mask"],
-                    desc="Counting tokens",
-                    disable=should_disable_tqdm,
+            # Get total number of items
+            total_items = len(self.tokenized_data)
+            # Get number of items per process
+            items_per_process = total_items // 64
+            # Initialize multiprocessor
+            multiprocessor = concurrent_utils.MultiProcessor(num_workers=64)
+            # Run count_tokens for each process
+            for i in range(64):
+                multiprocessor.run(
+                    self._count_tokens,
+                    process_idx=i,
+                    data=self.tokenized_data,
+                    indices=range(i * items_per_process, (i + 1) * items_per_process),
                 )
-            )
+            # Join all processes
+            multiprocessor.join()
+            # Sum the results
+            self._total_tokens = sum(multiprocessor.results)
         return self._total_tokens
 
-    @abc.abstractmethod
-    def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
-        raise NotImplementedError("Subclasses must implement this method")
+    def _count_tokens(self, process_idx: int, data: Dataset, indices: List[int]) -> int:
+        enable_tqdm = process_idx == 0
+        total_tokens = sum(
+            sum(data[i]["attention_mask"])
+            for i in tqdm.tqdm(indices, desc="Counting tokens", disable=not enable_tqdm)
+        )
+        print(f"Total tokens: {total_tokens} (Process {process_idx})")
+        return total_tokens
 
-    @abc.abstractmethod
-    def _load_dataset(self) -> Dataset:
-        raise NotImplementedError("Subclasses must implement this method")
-
-    @abc.abstractmethod
-    def _run_post_processing(self) -> None:
-        raise NotImplementedError("Subclasses must implement this method")
-
-    def run_post_processing(self) -> None:
-        if not self.is_post_processed:
-            self._run_post_processing()
-            self.is_post_processed = True
-        return None
-
-    def load_dataset(self) -> None:
-        self.raw_data = self._load_dataset()
-        return None
+    def load_dataset(self) -> Dataset:
+        self.raw_data = load_dataset(
+            path=self.cfg.huggingface_dataset_name,
+            name=self.cfg.subset,
+            split=self.cfg.split,
+            cache_dir=self.hf_cache_dir_path,
+            num_proc=8,
+        )
 
     def tokenize_data(
         self,
         batched: bool = True,
         remove_columns: List[str] = [],
     ) -> None:
-        # TODO: Need is really slow (got slower than before). I don't think multiple processes are being used.
         assert self.raw_data is not None, "Raw data is not loaded"
         if self.tokenized_data is None:
             # Check if remove_columns are present in the raw_data, if not remove them from the list
@@ -125,9 +155,82 @@ class BaseDataset:
             )
         return None
 
-    def save_to_disk(self, path: str) -> None:
-        self.tokenized_data.save_to_disk(path)
+    def tokenize_data_and_save_to_disk(
+        self,
+        batched: bool = True,
+        remove_columns: List[str] = [],
+        overwrite: bool = False,
+    ) -> None:
+        assert self.raw_data is not None, "Raw data is not loaded"
+        if os.path.exists(self.tokenized_cache_path) and not overwrite:
+            log_if_rank_zero(
+                logger,
+                f"Tokenized data already exists at {self.tokenized_cache_path}. Skip tokenization.",
+            )
+            self.tokenized_data = self.load_from_disk(self.tokenized_cache_path)
+            return None
 
-    def load_from_disk(self, path: str) -> None:
-        self.tokenized_data = Dataset.load_from_disk(path)
+        # Tokenize the data
+        self.tokenize_data(batched=batched, remove_columns=remove_columns)
+
+        # Save to disk
+        log_if_rank_zero(
+            logger,
+            f"Saving {len(self.tokenized_data)} tokenized examples to {self.tokenized_cache_path}",
+        )
+        self.save_to_disk(
+            dataset=self.tokenized_data,
+            path=self.tokenized_cache_path,
+            overwrite=False,
+        )
         return None
+
+    def post_process_and_save_to_disk(self, path: str, overwrite: bool = False) -> None:
+        assert self.tokenized_data is not None, "Tokenized data is not loaded"
+        # Check if the post-processed data already exists
+        if os.path.exists(path) and not overwrite:
+            log_if_rank_zero(
+                logger,
+                f"Post-processed data already exists at {path}. Skip post-processing.",
+            )
+            # Load the post-processed data
+            self.post_processed_data = self.load_from_disk(path)
+            return None
+
+        # Run post-processing
+        self.run_post_processing()
+
+        # Save to disk
+        log_if_rank_zero(
+            logger,
+            f"Saving {len(self.post_processed_data)} post-processed examples to {path}",
+        )
+        self.save_to_disk(
+            dataset=self.post_processed_data,
+            path=path,
+            overwrite=False,
+        )
+        return None
+
+    def save_to_disk(
+        self, dataset: Dataset, path: str, overwrite: bool = False
+    ) -> None:
+        # Check if the directory exists
+        if os.path.exists(path) and not overwrite:
+            log_if_rank_zero(
+                logger, f"Directory {path} already exists. Skip saving to disk."
+            )
+            return None
+        if os.path.exists(path):
+            log_if_rank_zero(
+                logger,
+                f"Directory {path} already exists. Overwriting it.",
+            )
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Save to disk
+        dataset.save_to_disk(path)
+        return None
+
+    def load_from_disk(self, path: str) -> Dataset:
+        return Dataset.load_from_disk(path)

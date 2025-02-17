@@ -78,41 +78,52 @@ class DataModule(L.LightningDataModule):
     def _prepare_dataset(self, dataset: BaseDataset) -> None:
         """Downloads the dataset if not already present.
         This method is called only on 1 GPU in distributed training."""
-        if not os.path.exists(dataset.tokenized_cache_path):
-            # Download the dataset from the hub
-            log_if_rank_zero(
-                logger,
-                f"Downloading {dataset.cfg.name} data ({dataset.cfg.split} split) into {dataset.hf_cache_dir_path}",
-            )
-            dataset.load_dataset()
-
-            # Tokenize the dataset and save as a cache file
-            log_if_rank_zero(logger, "Tokenizing dataset...")
-            dataset.tokenize_data(
-                batched=True,
-                remove_columns=dataset.cfg.remove_columns,
-            )
-
-            # Check if the directory exists
-            if not os.path.exists(dataset.tokenized_cache_path):
-                log_if_rank_zero(
-                    logger,
-                    f"Directory {dataset.tokenized_cache_path} does not exist. Creating it.",
-                )
-                os.makedirs(dataset.tokenized_cache_path)
-            # Save the tokenized dataset
-            log_if_rank_zero(
-                logger,
-                f"Saving tokenized dataset to {dataset.tokenized_cache_path}",
-            )
-            dataset.save_to_disk(dataset.tokenized_cache_path)
-
-            log_if_rank_zero(
-                logger, f"Number of tokens in the dataset: {dataset.total_tokens}"
+        # Load raw data
+        # Check if post_process_cache_path exists
+        if os.path.exists(dataset.post_process_cache_path):
+            log_if_rank_zero(logger, "Loading cached dataset...")
+            dataset.post_processed_data = dataset.load_from_disk(
+                dataset.post_process_cache_path
             )
         else:
-            # Load the cached dataset
-            dataset.load_from_disk(dataset.tokenized_cache_path)
+            # Check if tokenized_cache_path exists
+            if os.path.exists(dataset.tokenized_cache_path):
+                log_if_rank_zero(logger, "Loading cached tokenized dataset...")
+                dataset.post_processed_data = dataset.load_from_disk(
+                    dataset.tokenized_cache_path
+                )
+            else:
+                log_if_rank_zero(logger, "Loading dataset...")
+                dataset.load_dataset()
+
+                # Pre-processing
+                log_if_rank_zero(
+                    logger,
+                    f"Running pre-processing on the {len(dataset.raw_data)} raw data...",
+                )
+                dataset.run_pre_processing()
+
+                # Tokenize the dataset and save as a cache file
+                log_if_rank_zero(
+                    logger,
+                    f"Tokenizing {len(dataset.raw_data)} raw data...",
+                )
+                dataset.tokenize_data_and_save_to_disk(
+                    batched=True,
+                    remove_columns=dataset.cfg.remove_columns,
+                )
+
+            # Post-processing
+            log_if_rank_zero(
+                logger,
+                f"Running post-processing on the {len(dataset.tokenized_data)} tokenized data...",
+            )
+            dataset.post_process_and_save_to_disk(dataset.post_process_cache_path)
+
+        log_if_rank_zero(
+            logger,
+            f"Total dataset size: {len(dataset)}",
+        )
         return None
 
     def _setup_dataset(self, dataset: BaseDataset) -> None:
@@ -122,20 +133,20 @@ class DataModule(L.LightningDataModule):
         Args:
             stage: Either 'fit', 'validate', 'test', or 'predict'. Currently unused.
         """
-        if not os.path.exists(dataset.tokenized_cache_path):
+        if not os.path.exists(dataset.post_process_cache_path):
             raise FileNotFoundError(
-                f"Tokenized dataset not found at {dataset.tokenized_cache_path}. Run prepare_data first."
+                f"Tokenized dataset not found at {dataset.post_process_cache_path}. Run prepare_data first."
             )
 
         # Load the cached tokenized dataset instead of the raw dataset
-        dataset.load_from_disk(dataset.tokenized_cache_path)
+        dataset.post_processed_data = dataset.load_from_disk(
+            dataset.post_process_cache_path
+        )
+
         log_if_rank_zero(
             logger,
             f"Loaded cached tokenized dataset with {len(dataset)} examples",
         )
-
-        # Post-processing
-        dataset.run_post_processing()
 
         return dataset
 
