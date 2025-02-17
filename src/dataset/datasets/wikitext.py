@@ -90,7 +90,7 @@ class WikiTextDataset(BaseDataset):
             }
             dataset_of_segments = Dataset.from_dict(dict_of_lists)
             log_if_rank_zero(
-                logger, f"Saving segmented data to {segment_cache_dir_path}"
+                logger, f"Saving {len(dataset_of_segments)} segmented data to {segment_cache_dir_path}"
             )
             # Save the segmented data into self.tokenized_data
             dataset_of_segments.save_to_disk(segment_cache_dir_path)
