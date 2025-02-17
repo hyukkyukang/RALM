@@ -31,6 +31,29 @@ torch.set_float32_matmul_precision("high")
 torch._dynamo.config.cache_size_limit = 64
 
 
+def get_total_optimization_steps(
+    total_dataset_size: int,
+    per_device_batch_size: int,
+    num_gpus: int,
+    gradient_accumulation_steps: int,
+    max_epochs: int,
+) -> int:
+    return (
+        total_dataset_size
+        // (per_device_batch_size * num_gpus * gradient_accumulation_steps)
+        * max_epochs
+    )
+
+
+def get_total_training_steps(
+    total_dataset_size: int,
+    per_device_batch_size: int,
+    num_gpus: int,
+    max_epochs: int,
+) -> int:
+    return total_dataset_size // (per_device_batch_size * num_gpus) * max_epochs
+
+
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     tag_prefix = "debug_" if cfg.is_debug else ""
@@ -54,19 +77,17 @@ def main(cfg: DictConfig) -> None:
     data_module.prepare_data()
 
     # Compute the total number of training steps for the learning rate scheduler
-    total_optimization_steps = (
-        len(data_module.train_dataset)
-        // (
-            cfg.training.gradient_accumulation_steps
-            * cfg.training.per_device_batch_size
-            * torch.cuda.device_count()
-        )
-        * cfg.training.max_epochs
+    total_optimization_steps = get_total_optimization_steps(
+        total_dataset_size=len(data_module.train_dataset),
+        per_device_batch_size=cfg.training.per_device_batch_size,
+        num_gpus=torch.cuda.device_count(),
+        max_epochs=cfg.training.max_epochs,
     )
-    total_training_steps = (
-        len(data_module.train_dataset)
-        // (cfg.training.per_device_batch_size * torch.cuda.device_count())
-        * cfg.training.max_epochs
+    total_training_steps = get_total_training_steps(
+        total_dataset_size=len(data_module.train_dataset),
+        per_device_batch_size=cfg.training.per_device_batch_size,
+        num_gpus=torch.cuda.device_count(),
+        max_epochs=cfg.training.max_epochs,
     )
     log_if_rank_zero(logger, f"Total training steps: {total_training_steps}")
     log_if_rank_zero(logger, f"Total optimization steps: {total_optimization_steps}")

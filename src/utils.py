@@ -1,14 +1,14 @@
 import logging
 from typing import *
 
-import torch.distributed as dist
 from omegaconf import DictConfig, open_dict
 from pytorch_lightning.utilities import rank_zero_only
 
 
 @rank_zero_only
 def log_if_rank_zero(logger: logging.Logger, message: str, level: str = "info") -> None:
-    """Helper function to log only on rank 0 process."""
+    """Helper function to log only on rank 0 process.
+    If not distributed, log the message as well."""
     getattr(logger, level)(message)
 
 
