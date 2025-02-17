@@ -9,7 +9,7 @@ is_debug: False
 # Defaults
 defaults:
     - _self_
-    - model: rellama
+    - model: llama
     - dataset:
         - pints_ai
         - lambada

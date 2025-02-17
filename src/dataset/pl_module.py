@@ -122,7 +122,7 @@ class DataModule(L.LightningDataModule):
 
         log_if_rank_zero(
             logger,
-            f"Total dataset size: {len(dataset)}",
+            f"Total dataset size of {dataset.cfg.name}: {len(dataset)}",
         )
         return None
 

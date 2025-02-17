@@ -9,15 +9,15 @@ from transformers.models.llama.modeling_llama import (
     LlamaRMSNorm,
 )
 
-from src.model.rellama.attention import ReLlamaAttention
+from src.model.llama.attention import LlamaAttention
 
 
-class ReLlamaDecoderLayer(torch.nn.Module):
+class LlamaDecoderLayer(torch.nn.Module):
     def __init__(self, config: DictConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.self_attn = ReLlamaAttention(config=config, layer_idx=layer_idx)
+        self.self_attn = LlamaAttention(config=config, layer_idx=layer_idx)
 
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -31,7 +31,6 @@ class ReLlamaDecoderLayer(torch.nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
-        retrieval_key_value: Optional[Cache] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -56,7 +55,6 @@ class ReLlamaDecoderLayer(torch.nn.Module):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            retrieval_key_value=retrieval_key_value,
             **kwargs,
         )
         hidden_states = residual + hidden_states

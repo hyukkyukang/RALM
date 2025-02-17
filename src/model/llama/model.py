@@ -3,6 +3,7 @@ from typing import *
 
 import torch
 import transformers
+from omegaconf import DictConfig
 from transformers.cache_utils import StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_utils import PreTrainedModel
@@ -16,19 +17,18 @@ from transformers.models.llama.modeling_llama import (
     LlamaRotaryEmbedding,
 )
 
-from src.model.rellama.decoder import ReLlamaDecoderLayer
+from src.model.llama.decoder import LlamaDecoderLayer
 from src.model.utils import initialize_weights
-from src.tokenization.rellama_tokenizer import ReLlamaTokenizer
-from omegaconf import DictConfig
+from src.tokenization.llama_tokenizer import LlamaTokenizer
 
-logger = logging.getLogger("ReLlama")
+logger = logging.getLogger("Llama")
 
 
-class ReLlamaPreTrainedModel(PreTrainedModel):
+class LlamaPreTrainedModel(PreTrainedModel):
     config_class = LlamaConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["ReLlamaDecoderLayer"]
+    _no_split_modules = ["LlamaDecoderLayer"]
     _skip_keys_device_placement = ["past_key_values"]
     _supports_flash_attn_2 = True
     _supports_sdpa = True
@@ -49,8 +49,8 @@ class ReLlamaPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class ReLlama(ReLlamaPreTrainedModel):
-    def __init__(self, cfg: DictConfig, tokenizer: Optional[ReLlamaTokenizer] = None):
+class Llama(LlamaPreTrainedModel):
+    def __init__(self, cfg: DictConfig, tokenizer: Optional[LlamaTokenizer] = None):
         llama_config: LlamaConfig = get_customized_llama_config(cfg, tokenizer)
         super().__init__(llama_config)
         self.padding_idx = llama_config.pad_token_id
@@ -61,7 +61,7 @@ class ReLlama(ReLlamaPreTrainedModel):
         )
         self.layers = torch.nn.ModuleList(
             [
-                ReLlamaDecoderLayer(llama_config, layer_idx)
+                LlamaDecoderLayer(llama_config, layer_idx)
                 for layer_idx in range(llama_config.num_hidden_layers)
             ]
         )
@@ -70,8 +70,6 @@ class ReLlama(ReLlamaPreTrainedModel):
         )
         # self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = LlamaRotaryEmbedding(config=llama_config)
-        # Type embedding for text and retrieved data
-        self.input_type_embeddings = torch.nn.Embedding(2, llama_config.hidden_size)
         self.gradient_checkpointing = False
         initialize_weights(self)
 
@@ -220,14 +218,12 @@ class ReLlama(ReLlamaPreTrainedModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
-        retrieval_key_values: Optional[Cache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        is_retrieval: Optional[bool] = False,
         **flash_attn_kwargs: FlashAttentionKwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = (
@@ -258,13 +254,6 @@ class ReLlama(ReLlamaPreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-
-        # TODO: Check if way of adding type embeddings is efficient and gradient friendly
-        # Add Type embeddings - efficiently get 0th embedding
-        input_type_embeds = self.input_type_embeddings.weight[
-            int(is_retrieval)
-        ].expand_as(inputs_embeds)
-        inputs_embeds = inputs_embeds + input_type_embeds
 
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache()
@@ -310,7 +299,6 @@ class ReLlama(ReLlamaPreTrainedModel):
                     causal_mask,
                     position_ids,
                     past_key_values,
-                    retrieval_key_values,
                     output_attentions,
                     use_cache,
                     cache_position,
@@ -322,7 +310,6 @@ class ReLlama(ReLlamaPreTrainedModel):
                     attention_mask=causal_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
-                    retrieval_key_value=retrieval_key_values,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
@@ -355,7 +342,7 @@ def get_customized_llama_config(
 ) -> transformers.LlamaConfig:
     # Load the tokenizer if not provided
     if tokenizer is None:
-        tokenizer = ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
+        tokenizer = LlamaTokenizer.from_pretrained(cfg.model.base_name)
 
     # Get the config from the pre-trained models
     llama_config = transformers.LlamaConfig.from_pretrained(cfg.model.base_name)
@@ -376,11 +363,5 @@ def get_customized_llama_config(
     llama_config.num_hidden_layers = cfg.model.architecture.layers
     llama_config.max_position_embeddings = cfg.model.max_length
     llama_config.torch_dtype = torch.float32
-    # Related to the retrival chunks
-    llama_config.input_chunk_size = 64
-    llama_config.retrieval_chunk_size = 64
-    assert (
-        llama_config.max_position_embeddings % llama_config.input_chunk_size == 0
-    ), "max_position_embeddings must be divisible by input_chunk_size"
 
     return llama_config

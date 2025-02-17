@@ -48,7 +48,7 @@ def predict_next_tokens(
     current_input_token_ids = batch_token_ids
     states = None
     for _ in range(steps_to_predict):
-        outputs = model(current_input_token_ids, past_key_values=states)
+        outputs = model(current_input_token_ids, past_key_values=states, use_cache=True)
         logits = outputs.logits  # Get logits from the outputs
         # Clone if using torch.compile
         if is_model_compiled(model):

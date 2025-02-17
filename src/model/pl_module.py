@@ -13,18 +13,15 @@ from transformers.optimization import Adafactor
 
 from src.evaluation.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.next_token_prediction import (
-    compute_perplexity_and_bpb,
-    evaluate_next_token_prediction,
-)
+    compute_perplexity_and_bpb, evaluate_next_token_prediction)
+from src.model.llama.causal_modeling import LlamaForCausalLM
+from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import (
-    add_to_tensor_dict_safely,
-    get_compile_decorator,
-    lr_lambda_cosine_decay,
-    lr_lambda_linear_decay,
-)
+from src.model.utils import (add_to_tensor_dict_safely, get_compile_decorator,
+                             lr_lambda_cosine_decay, lr_lambda_linear_decay)
 from src.tokenization import ReLlamaTokenizer
+from src.tokenization.registry import TOKENIZER_REGISTRY
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("LightningModule")
@@ -59,13 +56,14 @@ class LightningModule(L.LightningModule):
         self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
 
+    @property
+    def uncompiled_model(self) -> transformers.LlamaForCausalLM:
+        return self.model._orig_mod if hasattr(self.model, "_orig_mod") else self.model
+
     def initialize_tokenizer(self) -> ReLlamaTokenizer:
-        if self.cfg.model.name == "rellama":
-            tokenizer = ReLlamaTokenizer.from_pretrained(self.cfg.model.base_name)
-        elif self.cfg.model.name == "gpt":
-            tokenizer = AutoTokenizer.from_pretrained(self.cfg.model.base_name)
-        else:
-            raise ValueError(f"Tokenizer name {self.cfg.model.name} not supported")
+        tokenizer = TOKENIZER_REGISTRY[self.cfg.model.name].from_pretrained(
+            self.cfg.model.base_name
+        )
         return tokenizer
 
     def initialize_language_model(self) -> transformers.LlamaForCausalLM:
@@ -77,6 +75,9 @@ class LightningModule(L.LightningModule):
             causal_model = AutoModelForCausalLM.from_pretrained(
                 self.cfg.model.base_name
             )
+        elif self.cfg.model.name == "llama":
+            model = Llama(self.cfg, self.tokenizer)
+            causal_model = LlamaForCausalLM(base_model=model)
         else:
             raise ValueError(f"Model name {self.cfg.model.name} not supported")
 
@@ -90,7 +91,7 @@ class LightningModule(L.LightningModule):
                     "Compiling the model with torch compile...",
                 )
                 causal_model = torch.compile(
-                    causal_model, dynamic=True, mode="max-autotune"
+                    causal_model, dynamic=True, #mode="max-autotune"
                 )
             else:
                 log_if_rank_zero(
@@ -113,8 +114,32 @@ class LightningModule(L.LightningModule):
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
         **kwargs,
     ) -> Any:
+        # Create dummy retrieved data
+        # b_size = input_ids.size(0)
+        # input_length = input_ids.size(1)
+        # input_chunk_size = self.model.config.input_chunk_size
+        # retrieval_chunk_size = self.model.config.retrieval_chunk_size
+        # num_input_chunk_per_batch = input_length // input_chunk_size
+        # num_retrieval_chunk_per_batch = num_input_chunk_per_batch - 1
+        # retrieval_data_input_ids = torch.randint(
+        #     0, 10000, (b_size, num_retrieval_chunk_per_batch, retrieval_chunk_size)
+        # )
+        # # Change the shape of the retrieved data to be (b_size * num_chunk_per_batch, retrieval_chunk_size)
+        # retrieval_data_input_ids = retrieval_data_input_ids.view(
+        #     b_size * num_retrieval_chunk_per_batch, retrieval_chunk_size
+        # ).to(self.device)
+        # retrieval_data_att_mask = torch.ones_like(retrieval_data_input_ids).to(
+        #     self.device
+        # )
+        # retrieved_data = {
+        #     "input_ids": retrieval_data_input_ids,
+        #     "attention_mask": retrieval_data_att_mask,
+        # }
+        # attention_mask = torch.ones_like(input_ids)
+
         # Use inference_mode when not training
         if not self.training:
             with torch.inference_mode():
@@ -122,10 +147,16 @@ class LightningModule(L.LightningModule):
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     labels=labels,
+                    use_cache=use_cache,
                     **kwargs,
                 )
         return self.model(
-            input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+            retrieved_data=retrieved_data,
+            use_cache=use_cache,
+            **kwargs,
         )
 
     def training_step(
@@ -185,7 +216,7 @@ class LightningModule(L.LightningModule):
         return None
 
     def validation_step(
-        self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int
+        self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
         b_size = len(batch["input_ids"])
 
@@ -379,6 +410,7 @@ class LightningModule(L.LightningModule):
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
+            use_cache=False,
         )
         # Get the loss and calculate perplexity and bits per byte (BPB)
         loss = outputs.loss
@@ -430,7 +462,7 @@ class LightningModule(L.LightningModule):
                     batch_token_ids=batch_token_ids,
                     target_last_words=target_last_words,
                     tokenizer=self.tokenizer,
-                    model=self.model._orig_mod,
+                    model=self.uncompiled_model,
                 )
             )
         return sum(is_correct_list) / bsize
@@ -444,6 +476,6 @@ class LightningModule(L.LightningModule):
             token_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
             labels=batch["labels"],
-            model=self.model._orig_mod,
+            model=self.uncompiled_model,
         )
         return loss_sum, valid_tokens_cnt
