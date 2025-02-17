@@ -89,7 +89,7 @@ class DataModule(L.LightningDataModule):
             # Check if tokenized_cache_path exists
             if os.path.exists(dataset.tokenized_cache_path):
                 log_if_rank_zero(logger, "Loading cached tokenized dataset...")
-                dataset.post_processed_data = dataset.load_from_disk(
+                dataset.tokenized_data = dataset.load_from_disk(
                     dataset.tokenized_cache_path
                 )
             else:
