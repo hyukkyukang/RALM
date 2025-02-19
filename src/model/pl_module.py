@@ -90,8 +90,9 @@ class LightningModule(L.LightningModule):
                     logger,
                     "Compiling the model with torch compile...",
                 )
+                mode = None if self.cfg.model.name == "rellama" else "max-autotune"
                 causal_model = torch.compile(
-                    causal_model, dynamic=True, #mode="max-autotune"
+                    causal_model, dynamic=True, mode=mode
                 )
             else:
                 log_if_rank_zero(
