@@ -363,5 +363,5 @@ def get_customized_llama_config(
     llama_config.num_hidden_layers = cfg.model.architecture.layers
     llama_config.max_position_embeddings = cfg.model.max_length
     llama_config.torch_dtype = torch.float32
-
+    llama_config.use_cache = False
     return llama_config

@@ -382,5 +382,5 @@ def get_customized_llama_config(
     assert (
         llama_config.max_position_embeddings % llama_config.input_chunk_size == 0
     ), "max_position_embeddings must be divisible by input_chunk_size"
-
+    llama_config.use_cache = False
     return llama_config
