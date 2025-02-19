@@ -11,6 +11,7 @@ from transformers import DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import count_avg_chars_per_token_in_batch
+from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
 
@@ -20,9 +21,12 @@ class PintsAIDataset(BaseDataset):
         cfg: DictConfig,
         global_cfg: DictConfig,
         tokenizer: ReLlamaTokenizer,
-        tokenized_data: Dataset | None = None,
+        tokenized_data: Optional[Dataset] = None,
+        post_processed_data: Optional[Dataset] = None,
+        retrieved_data: Optional[Dataset] = None,
+        retriever: Optional[Retriever] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
 
     @cached_property
     def collator(self) -> "PintsAIDataCollator":
@@ -165,6 +169,8 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
                 "total_valid_tokens_cnt": torch.tensor(
                     total_valid_tokens_cnt, dtype=torch.int64
                 ),
+                # TODO: Implement this for self.is_use_retrieval==True
+                "retrieved_chunk_ids": None,
             }
         )
 

@@ -113,33 +113,11 @@ class LightningModule(L.LightningModule):
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        retrieved_chunk_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         **kwargs,
     ) -> Any:
-        # Create dummy retrieved data
-        # b_size = input_ids.size(0)
-        # input_length = input_ids.size(1)
-        # input_chunk_size = self.model.config.input_chunk_size
-        # retrieval_chunk_size = self.model.config.retrieval_chunk_size
-        # num_input_chunk_per_batch = input_length // input_chunk_size
-        # num_retrieval_chunk_per_batch = num_input_chunk_per_batch - 1
-        # retrieval_data_input_ids = torch.randint(
-        #     0, 10000, (b_size, num_retrieval_chunk_per_batch, retrieval_chunk_size)
-        # )
-        # # Change the shape of the retrieved data to be (b_size * num_chunk_per_batch, retrieval_chunk_size)
-        # retrieval_data_input_ids = retrieval_data_input_ids.view(
-        #     b_size * num_retrieval_chunk_per_batch, retrieval_chunk_size
-        # ).to(self.device)
-        # retrieval_data_att_mask = torch.ones_like(retrieval_data_input_ids).to(
-        #     self.device
-        # )
-        # retrieved_data = {
-        #     "input_ids": retrieval_data_input_ids,
-        #     "attention_mask": retrieval_data_att_mask,
-        # }
-        # attention_mask = torch.ones_like(input_ids)
-
         # Use inference_mode when not training
         if not self.training:
             with torch.inference_mode():
@@ -148,14 +126,15 @@ class LightningModule(L.LightningModule):
                     attention_mask=attention_mask,
                     labels=labels,
                     use_cache=use_cache,
+                    retrieved_chunk_ids=retrieved_chunk_ids,
                     **kwargs,
                 )
         return self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
-            retrieved_data=retrieved_data,
             use_cache=use_cache,
+            retrieved_chunk_ids=retrieved_chunk_ids,
             **kwargs,
         )
 
@@ -169,6 +148,7 @@ class LightningModule(L.LightningModule):
         self.compiled_step(
             batch["input_ids"],
             batch["attention_mask"],
+            batch["retrieved_chunk_ids"],
             batch["labels"],
             batch["avg_char_per_token"],
         )
@@ -403,12 +383,14 @@ class LightningModule(L.LightningModule):
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        labels: torch.Tensor,
-        avg_char_per_token: float,
+        retrieved_chunk_ids: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        avg_char_per_token: float = 0.0,
     ) -> None:
         outputs = self(
             input_ids=input_ids,
             attention_mask=attention_mask,
+            retrieved_chunk_ids=retrieved_chunk_ids,
             labels=labels,
             use_cache=False,
         )
@@ -451,10 +433,11 @@ class LightningModule(L.LightningModule):
             assert (
                 type(batch["input_ids"][b_idx]) == list
             ), "input_ids must be a list (To avoid padding)"
-            batch_token_ids = torch.tensor(batch["input_ids"][b_idx : b_idx + 1]).to(
-                self.device
-            )
+            batch_token_ids = batch["input_ids"][b_idx : b_idx + 1]
             target_last_words = batch["last_word"][b_idx : b_idx + 1]
+            retrieved_chunk_ids = (
+                None if batch["retrieved_chunk_ids"] is None else batch["retrieved_chunk_ids"][b_idx : b_idx + 1]
+            )
 
             # Evaluate the last word prediction
             is_correct_list.extend(
@@ -463,6 +446,7 @@ class LightningModule(L.LightningModule):
                     target_last_words=target_last_words,
                     tokenizer=self.tokenizer,
                     model=self.uncompiled_model,
+                    retrieved_chunk_ids=retrieved_chunk_ids,
                 )
             )
         return sum(is_correct_list) / bsize
@@ -477,5 +461,6 @@ class LightningModule(L.LightningModule):
             attention_mask=batch["attention_mask"],
             labels=batch["labels"],
             model=self.uncompiled_model,
+            retrieved_chunk_ids=batch["retrieved_chunk_ids"],
         )
         return loss_sum, valid_tokens_cnt

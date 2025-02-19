@@ -59,7 +59,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        retrieved_data: Optional[Dict[str, torch.Tensor]] = None,
+        retrieved_chunk_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -114,11 +114,10 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
 
         # Encode the retrieved data with no grad
-        if retrieved_data is not None:
+        if retrieved_chunk_ids is not None:
             with torch.no_grad():
                 retrieved_data_embeds = self.model(
-                    input_ids=retrieved_data["input_ids"],
-                    attention_mask=retrieved_data["attention_mask"],
+                    input_ids=retrieved_chunk_ids,
                     use_cache=True,
                     is_retrieval=True,
                 )
