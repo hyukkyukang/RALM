@@ -13,11 +13,8 @@ import hydra
 import lightning as L
 import torch
 import tqdm
-from lightning.pytorch.callbacks import (
-    LearningRateMonitor,
-    ModelCheckpoint,
-    ModelSummary,
-)
+from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
+                                         ModelSummary)
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig
@@ -25,6 +22,7 @@ from omegaconf import DictConfig
 from src.dataset import DataModule
 from src.model import LightningModule
 from src.model.utils import repair_checkpoint
+from src.training.checkpoint import TimeBasedCheckpoint
 from src.utils import add_config, log_if_rank_zero
 
 logger = logging.getLogger("PL_Trainer")
@@ -120,7 +118,12 @@ def main(cfg: DictConfig) -> None:
         save_on_train_epoch_end=False,
         enable_version_counter=True,
     )
+    time_based_checkpoint_callback = TimeBasedCheckpoint(
+        save_interval_hours=cfg.training.checkpoint_save_interval_hours,
+        dirpath=default_root_dir,
+    )
 
+    # Trainer initialization with training args
     # Trainer initialization with training args
     trainer = L.Trainer(
         deterministic=True,
@@ -144,6 +147,7 @@ def main(cfg: DictConfig) -> None:
             LearningRateMonitor(logging_interval="step"),
             # ModelSummary(max_depth=-1), # Turn this on if you want to see the model architecture (i.e., the parameter names),
             checkpoint_callback,
+            time_based_checkpoint_callback,
         ],
     )
     # Start training
