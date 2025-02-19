@@ -121,9 +121,20 @@ class DataModule(L.LightningDataModule):
             )
             dataset.post_process_and_save_to_disk()
 
+        # Retrieve data and save to disk
+        if dataset.is_use_retrieval and os.path.exists(dataset.retrieved_data_cache_path):
+            log_if_rank_zero(logger, "There is already retrieved data. Skip retrieval.")
+        else:
+            log_if_rank_zero(
+                logger,
+                f"Retrieving data for  the {len(dataset.post_processed_data)} post-processed data...",
+            )
+            dataset.retrieve_and_save_to_disk()
+
+        # Log the total dataset size
         log_if_rank_zero(
             logger,
-            f"Total dataset size: {len(dataset)}",
+            f"Total dataset size of {dataset.cfg.name}: {len(dataset)}",
         )
         return None
 

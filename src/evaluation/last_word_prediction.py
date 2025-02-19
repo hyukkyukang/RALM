@@ -34,6 +34,7 @@ def predict_next_tokens(
     batch_token_ids: torch.Tensor,
     tokenizer: AutoTokenizer,
     model: AutoModelForCausalLM,
+    retrieved_chunk_ids: Optional[torch.Tensor] = None,
     steps_to_predict: int = 6,
     beam_width: int = 128,
 ) -> List[str]:
@@ -48,7 +49,12 @@ def predict_next_tokens(
     current_input_token_ids = batch_token_ids
     states = None
     for _ in range(steps_to_predict):
-        outputs = model(current_input_token_ids, past_key_values=states)
+        outputs = model(
+            current_input_token_ids,
+            retrieved_chunk_ids=retrieved_chunk_ids,
+            past_key_values=states,
+            use_cache=True,
+        )
         logits = outputs.logits  # Get logits from the outputs
         # Clone if using torch.compile
         if is_model_compiled(model):
@@ -93,6 +99,7 @@ def evaluate_last_word_prediction(
     target_last_words: List[str],
     tokenizer: AutoTokenizer,
     model: AutoModelForCausalLM,
+    retrieved_chunk_ids: Optional[torch.Tensor] = None,
     is_analyze: bool = False,
 ) -> List[bool]:
     """batch_token_ids shape: (bsize, seq_len)
@@ -104,6 +111,7 @@ def evaluate_last_word_prediction(
         batch_token_ids=batch_token_ids,
         tokenizer=tokenizer,
         model=model,
+        retrieved_chunk_ids=retrieved_chunk_ids,
     )
     batch_input_contexts: List[str] = [
         tokenizer.decode(token_ids) for token_ids in batch_token_ids

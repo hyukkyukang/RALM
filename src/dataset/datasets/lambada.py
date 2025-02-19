@@ -1,14 +1,15 @@
-import logging
 import os
 from functools import cached_property
 from typing import *
 
 import hkkang_utils.file as file_utils
+import torch
 from datasets import Dataset
 from omegaconf import DictConfig
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import split_text_into_context_and_last_word
+from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
 
@@ -22,9 +23,12 @@ class LambadaDataset(BaseDataset):
         cfg: DictConfig,
         global_cfg: DictConfig,
         tokenizer: ReLlamaTokenizer,
-        tokenized_data: Dataset | None = None,
+        tokenized_data: Optional[Dataset] = None,
+        post_processed_data: Optional[Dataset] = None,
+        retrieved_data: Optional[Dataset] = None,
+        retriever: Optional[Retriever] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
 
     @cached_property
     def collator(self) -> "LambadaDataCollator":
@@ -109,6 +113,12 @@ class LambadaDataCollator:
         # Iterate over the examples and add the data to the batch
         for example in examples:
             for key in first_example_keys:
-                batch[key].append(example[key])
+                if key == "input_ids":
+                    item = torch.tensor(example[key])
+                else:
+                    item = example[key]
+                batch[key].append(item)
 
+        # TODO: Implement this for self.is_use_retrieval==True
+        batch["retrieved_chunk_ids"] = None
         return batch

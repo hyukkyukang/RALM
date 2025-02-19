@@ -11,6 +11,7 @@ def evaluate_next_token_prediction(
     attention_mask: torch.Tensor,
     labels: torch.Tensor,
     model: torch.nn.Module,
+    retrieved_chunk_ids: Optional[torch.Tensor] = None,
 ) -> Tuple[float, int]:
     """
     Evaluate model's next token prediction performance.
@@ -26,7 +27,12 @@ def evaluate_next_token_prediction(
         Tuple of (perplexity, bpb)
     """
     # Forward pass
-    outputs = model(input_ids=token_ids, attention_mask=attention_mask, labels=labels)
+    outputs = model(
+        input_ids=token_ids,
+        attention_mask=attention_mask,
+        labels=labels,
+        retrieved_chunk_ids=retrieved_chunk_ids,
+    )
 
     # Get the loss
     neg_log_likelihood_loss = outputs.loss

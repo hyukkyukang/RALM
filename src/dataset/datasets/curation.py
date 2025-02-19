@@ -10,7 +10,9 @@ from omegaconf import DictConfig
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
-from src.dataset.utils import INVALID_TOKEN_ID, perform_sliding_window_segmentation
+from src.dataset.utils import (INVALID_TOKEN_ID,
+                               perform_sliding_window_segmentation)
+from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
@@ -23,9 +25,12 @@ class CurationDataset(BaseDataset):
         cfg: DictConfig,
         global_cfg: DictConfig,
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
-        tokenized_data: Dataset | None = None,
+        tokenized_data: Optional[Dataset] = None,
+        post_processed_data: Optional[Dataset] = None,
+        retrieved_data: Optional[Dataset] = None,
+        retriever: Optional[Retriever] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
 
     @cached_property
     def collator(self) -> "CurationDataCollator":
@@ -214,6 +219,8 @@ class CurationDataCollator(DataCollatorForLanguageModeling):
         batch.update(
             {
                 "total_chars_cnt": total_chars_cnt,
+                # TODO: Implement this for self.is_use_retrieval==True
+                "retrieved_chunk_ids": None, 
             }
         )
 

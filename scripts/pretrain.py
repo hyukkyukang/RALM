@@ -30,8 +30,9 @@ from src.utils import add_config, log_if_rank_zero
 logger = logging.getLogger("PL_Trainer")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-torch.set_float32_matmul_precision("high")
-torch._dynamo.config.cache_size_limit = 64
+# Changing the precision of the matmul operation to high causes error when torch compile the flex attention
+# torch.set_float32_matmul_precision("high")
+torch._dynamo.config.cache_size_limit = 1000
 
 
 def get_total_optimization_steps(

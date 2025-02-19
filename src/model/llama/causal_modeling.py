@@ -10,15 +10,15 @@ from transformers.models.llama.modeling_llama import (
     LlamaPreTrainedModel,
 )
 
-from src.model.rellama.model import ReLlama
+from src.model.llama.model import Llama
 from src.model.utils import initialize_weights
 
 
-class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
+class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
 
-    def __init__(self, base_model: Union[LlamaModel, ReLlama]):
+    def __init__(self, base_model: Union[LlamaModel, Llama]):
         # Get llama config
         super().__init__(base_model.config)
         self.model = base_model
@@ -59,7 +59,6 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        retrieved_chunk_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -113,18 +112,6 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
-        # Encode the retrieved data with no grad
-        if retrieved_chunk_ids is not None:
-            with torch.no_grad():
-                retrieved_data_embeds = self.model(
-                    input_ids=retrieved_chunk_ids,
-                    use_cache=True,
-                    is_retrieval=True,
-                )
-                retrieval_key_values = retrieved_data_embeds.past_key_values
-        else:
-            retrieval_key_values = None
-
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
@@ -132,13 +119,11 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            retrieval_key_values=retrieval_key_values,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
-            is_retrieval=False,
             **kwargs,
         )
 
