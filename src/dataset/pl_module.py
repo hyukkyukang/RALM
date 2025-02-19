@@ -80,8 +80,9 @@ class DataModule(L.LightningDataModule):
         This method is called only on 1 GPU in distributed training."""
         # Load raw data
         # Check if post_process_cache_path exists
+        log_if_rank_zero(logger, f"Preparing {dataset.name} dataset...")
         if os.path.exists(dataset.post_process_cache_path):
-            log_if_rank_zero(logger, "Loading cached dataset...")
+            log_if_rank_zero(logger, "Loading cached post-processed dataset...")
             dataset.post_processed_data = dataset.load_from_disk(
                 dataset.post_process_cache_path
             )
@@ -118,7 +119,7 @@ class DataModule(L.LightningDataModule):
                 logger,
                 f"Running post-processing on the {len(dataset.tokenized_data)} tokenized data...",
             )
-            dataset.post_process_and_save_to_disk(dataset.post_process_cache_path)
+            dataset.post_process_and_save_to_disk()
 
         log_if_rank_zero(
             logger,

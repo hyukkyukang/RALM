@@ -34,7 +34,6 @@ class PintsAIDataset(BaseDataset):
         return PintsAIDataCollator(
             tokenizer=self.tokenizer,
             mlm=False,
-            max_length=self.global_cfg.model.max_length,
         )
 
     @property
@@ -177,9 +176,6 @@ class PintsAIDataset(BaseDataset):
         else:
             final_dataset = concatenate_datasets(temp_datasets)
 
-        # Create attention mask for the final dataset
-        final_dataset = final_dataset.map(lambda x: {"attention_mask": [1] * len(x["input_ids"])})
-
         # First, save the final dataset to a temporary final directory.
         log_if_rank_zero(logger, f"Saving final dataset to temporary path {self.post_process_cache_path}")
         final_dataset.save_to_disk(self.post_process_cache_path)
@@ -209,7 +205,6 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         self,
         tokenizer: Any,
         mlm: Optional[bool] = False,
-        max_length: Optional[int] = None,
     ) -> None:
         """Initialize the ReLLama data collator.
 
@@ -218,7 +213,6 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
             mlm: Whether to use masked language modeling (default: False)
         """
         super().__init__(tokenizer=tokenizer, mlm=mlm)
-        self.max_length = max_length
 
     def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Process a batch of examples. Add character counts for each sequence, after collation by the parent class.
@@ -231,11 +225,9 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
                 - All fields from parent collator (input_ids, labels, etc.)
                 - char_counts: List of character counts for each sequence
         """
-        # Truncate the input_ids and attention_mask to the max length
-        if self.max_length is not None:
-            for example in examples:
-                example["input_ids"] = example["input_ids"][: self.max_length]
-                example["attention_mask"] = example["attention_mask"][: self.max_length]
+        # Create attention mask for the final dataset
+        for example in examples:
+            example["attention_mask"] = torch.ones(len(example["input_ids"]), dtype=torch.int64)
 
         # First apply the parent class collation
         batch = super().__call__(examples)

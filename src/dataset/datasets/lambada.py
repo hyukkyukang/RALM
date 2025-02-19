@@ -73,6 +73,7 @@ class LambadaDataset(BaseDataset):
         return None
 
     def run_post_processing(self, *args, **kwargs) -> None:
+        self.post_processed_data = self.tokenized_data
         return None
 
 
