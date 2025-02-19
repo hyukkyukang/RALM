@@ -122,14 +122,15 @@ class DataModule(L.LightningDataModule):
             dataset.post_process_and_save_to_disk()
 
         # Retrieve data and save to disk
-        if dataset.is_use_retrieval and os.path.exists(dataset.retrieved_data_cache_path):
-            log_if_rank_zero(logger, "There is already retrieved data. Skip retrieval.")
-        else:
-            log_if_rank_zero(
-                logger,
-                f"Retrieving data for  the {len(dataset.post_processed_data)} post-processed data...",
-            )
-            dataset.retrieve_and_save_to_disk()
+        if dataset.is_use_retrieval:
+            if os.path.exists(dataset.retrieved_data_cache_path):
+                log_if_rank_zero(logger, "There is already retrieved data. Skip retrieval.")
+            else:
+                log_if_rank_zero(
+                    logger,
+                    f"Retrieving data for the {len(dataset.post_processed_data)} post-processed data...",
+                )
+                dataset.retrieve_and_save_to_disk()
 
         # Log the total dataset size
         log_if_rank_zero(
@@ -154,6 +155,14 @@ class DataModule(L.LightningDataModule):
         dataset.post_processed_data = dataset.load_from_disk(
             dataset.post_process_cache_path
         )
+        if dataset.is_use_retrieval:
+            assert os.path.exists(dataset.retrieved_data_cache_path), (
+                f"Retrieved data not found at {dataset.retrieved_data_cache_path}. "
+                "Run prepare_data first."
+            )
+            dataset.retrieved_data = dataset.load_from_disk(
+                dataset.retrieved_data_cache_path
+            )
 
         log_if_rank_zero(
             logger,

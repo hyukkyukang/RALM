@@ -429,14 +429,10 @@ class LightningModule(L.LightningModule):
         is_correct_list: List[bool] = []
         # last_word_prediction expects no padding
         for b_idx in range(bsize):
-            # Handle input token ids and target last words
-            assert (
-                type(batch["input_ids"][b_idx]) == list
-            ), "input_ids must be a list (To avoid padding)"
-            batch_token_ids = batch["input_ids"][b_idx : b_idx + 1]
+            batch_token_ids = batch["input_ids"][b_idx].unsqueeze(0)
             target_last_words = batch["last_word"][b_idx : b_idx + 1]
             retrieved_chunk_ids = (
-                None if batch["retrieved_chunk_ids"] is None else batch["retrieved_chunk_ids"][b_idx : b_idx + 1]
+                None if batch["retrieved_chunk_ids"] is None else batch["retrieved_chunk_ids"][b_idx].unsqueeze(0)
             )
 
             # Evaluate the last word prediction

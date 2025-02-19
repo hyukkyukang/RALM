@@ -231,7 +231,7 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         """
         # Create attention mask for the final dataset
         for example in examples:
-            example["attention_mask"] = torch.ones(len(example["input_ids"]), dtype=torch.int64)
+            example["attention_mask"] = [1] * len(example["input_ids"])
 
         # First apply the parent class collation
         batch = super().__call__(examples)

@@ -49,18 +49,18 @@ class BaseDataset:
         if self.post_processed_data is None:
             return None
         processed_data = self.post_processed_data[idx]
-        if self.is_use_retrieval:
-            assert self.retrieved_data is not None, "Retrieved data is not loaded"
-            # Get the retrieved data
-            retrieved_data = self.retrieved_data[idx]
-            # Combine the post-processed data and the retrieved data
-            data_to_return = {
-                "post_processed_data": processed_data,
-                "retrieved_data": retrieved_data,
-            }
-        else:
-            data_to_return = processed_data
-        return data_to_return
+        return processed_data
+        # TODO: Uncomment this when retrieval is implemented
+        # if self.is_use_retrieval:
+        #     assert self.retrieved_data is not None, "Retrieved data is not loaded"
+        #     # Get the retrieved data
+        #     retrieved_data = self.retrieved_data[idx]
+        #     # Combine the post-processed data and the retrieved data
+        #     data_to_return = processed_data.copy()
+        #     data_to_return.update(retrieved_data)
+        # else:
+        #     data_to_return = processed_data
+        # return data_to_return
 
 
     @cached_property
@@ -97,7 +97,9 @@ class BaseDataset:
 
     @property
     def is_use_retrieval(self) -> bool:
-        return self.global_cfg.model.name == "rellama" and self.global_cfg.model.is_use_retrieval
+        return False
+        # TODO: Uncomment this when retrieval is implemented
+        # return self.global_cfg.model.name == "rellama" and self.global_cfg.model.is_use_retrieval
 
     @property
     def hf_cache_dir_path(self) -> str:
@@ -116,8 +118,8 @@ class BaseDataset:
 
     @property
     def retrieved_data_cache_path(self) -> str:
-        chunk_size = self.global_cfg.model.max_length
-        return os.path.join(self.post_process_cache_path, "retrieved")
+        chunk_size = self.global_cfg.model.retrieval_chunk_size
+        return os.path.join(self.post_process_cache_path, f"retrieval_cache_{chunk_size}")
 
     @property
     def total_tokens(self) -> int:
@@ -184,10 +186,13 @@ class BaseDataset:
 
     def retrieve_data(self) -> None:
         # TODO: Need to implement this here.
+        num_of_chunks = self.global_cfg.model.max_length // self.global_cfg.model.input_chunk_size - 1
+        dummy_chunk_ids: List[List[int]] = [list(range(0, self.global_cfg.model.retrieval_chunk_size))] * num_of_chunks
         self.retrieved_data = Dataset.from_dict(
             {
-                "retireved_chunks": [
-                    "Hello, world!" for _ in range(len(self.post_processed_data))
+                "retrieved_chunk_ids": [
+                    dummy_chunk_ids
+                    for _ in tqdm.tqdm(range(len(self.post_processed_data)), desc="Creating dummy retrieval data")
                 ]
             }
         )
