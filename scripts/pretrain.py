@@ -9,15 +9,17 @@ from typing import *
 
 import git
 import hkkang_utils.misc as misc_utils
+import hkkang_utils.slack as slack_utils
 import hydra
 import lightning as L
+import psutil
 import torch
 import tqdm
 from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
                                          ModelSummary)
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from src.dataset import DataModule
 from src.model import LightningModule
@@ -56,8 +58,7 @@ def get_total_training_steps(
     return total_dataset_size // (per_device_batch_size * num_gpus) * max_epochs
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
-def main(cfg: DictConfig) -> None:
+def run_pretraining(cfg: DictConfig) -> None:
     tag_prefix = "debug_" if cfg.is_debug else ""
     default_root_dir = os.path.join(
         cfg.root_dir_path,
@@ -141,7 +142,7 @@ def main(cfg: DictConfig) -> None:
             save_dir=default_root_dir, name=cfg.tag, default_hp_metric=False
         ),
         strategy=DDPStrategy(
-            timeout=timedelta(hours=4), static_graph=True, gradient_as_bucket_view=True
+            timeout=timedelta(hours=1), static_graph=True, gradient_as_bucket_view=True
         ),
         callbacks=[
             LearningRateMonitor(logging_interval="step"),
@@ -192,6 +193,29 @@ def main(cfg: DictConfig) -> None:
 
     return None
 
+@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+def main(cfg: DictConfig) -> None:
+    # Pretty string for the config
+    pretty_cfg: str = OmegaConf.to_yaml(cfg)
+
+    # Capture full command used to launch the script
+    full_command = " ".join(psutil.Process( os.getpid() ).cmdline())
+    number_of_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+    with slack_utils.notification(
+        channel="language-modeling",
+        success_msg="Succeeded pretraining language model",
+        error_msg="Failed pretraining language model",
+        comments=[
+            f"Command line: `{full_command}`\n\n",
+            f"Number of GPUs: {number_of_gpus}\n\n",
+            f"with the following config:\n```{pretty_cfg}```\n",
+        ],
+    ):
+        run_pretraining(cfg)
+
+    print("Pretraining script done!")
+    return None
 
 if __name__ == "__main__":
     logging.basicConfig(
