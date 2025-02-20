@@ -34,6 +34,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 torch._dynamo.config.cache_size_limit = 1000
 
 
+def slack_disable_callback() -> bool:
+        is_not_main_process = torch.distributed.is_initialized() and torch.distributed.get_rank() != 0
+        return is_not_main_process
+
 
 def get_total_optimization_steps(
     total_dataset_size: int,
@@ -211,6 +215,7 @@ def main(cfg: DictConfig) -> None:
             f"Number of GPUs: {number_of_gpus}\n\n",
             f"with the following config:\n```{pretty_cfg}```\n",
         ],
+        disable_callback=slack_disable_callback,
     ):
         run_pretraining(cfg)
 
