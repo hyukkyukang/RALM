@@ -25,7 +25,7 @@ from src.dataset import DataModule
 from src.model import LightningModule
 from src.model.utils import repair_checkpoint
 from src.training.checkpoint import TimeBasedCheckpoint
-from src.utils import add_config, log_if_rank_zero
+from src.utils import add_config, is_main_process, log_if_rank_zero
 
 logger = logging.getLogger("PL_Trainer")
 
@@ -35,8 +35,7 @@ torch._dynamo.config.cache_size_limit = 1000
 
 
 def slack_disable_callback() -> bool:
-        is_not_main_process = torch.distributed.is_initialized() and torch.distributed.get_rank() != 0
-        return is_not_main_process
+    return not is_main_process()
 
 
 def get_total_optimization_steps(
@@ -171,11 +170,8 @@ def run_pretraining(cfg: DictConfig) -> None:
 
     # Rename the modules in the checkpoint when using torch compile
     # For the main process with rank 0 only
-    is_the_main_process = (
-        not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
-    )
     if (
-        is_the_main_process
+        is_main_process()
         and cfg.use_torch_compile
         and torch.cuda.get_device_capability()[0] >= 7
     ):
@@ -219,7 +215,8 @@ def main(cfg: DictConfig) -> None:
     ):
         run_pretraining(cfg)
 
-    print("Pretraining script done!")
+    if is_main_process():
+        print("Pretraining script done!")
     return None
 
 if __name__ == "__main__":

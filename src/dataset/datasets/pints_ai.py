@@ -16,7 +16,7 @@ from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import count_avg_chars_per_token_in_batch
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
-from src.utils import log_if_rank_zero
+from src.utils import is_main_process, log_if_rank_zero
 
 logger = logging.getLogger("PintsAIDataset")
 
@@ -110,12 +110,8 @@ class PintsAIDataset(BaseDataset):
             with open(checkpoint_path, "w") as f:
                 json.dump(checkpoint_data, f)
 
-        should_disable_tqdm = (
-            torch.distributed.is_initialized() and torch.distributed.get_rank() != 0
-        )
-
         # Process examples; skip those already processed.
-        for idx in tqdm.tqdm(range(processed_idx, len(dataset)), desc="Segmenting data", disable=should_disable_tqdm):
+        for idx in tqdm.tqdm(range(processed_idx, len(dataset)), desc="Segmenting data", disable=not is_main_process()):
             example = dataset[idx]
 
             # Append EOS token

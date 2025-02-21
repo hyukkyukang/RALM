@@ -14,7 +14,7 @@ from src.dataset.utils import (INVALID_TOKEN_ID,
                                perform_sliding_window_segmentation)
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
-from src.utils import log_if_rank_zero
+from src.utils import is_main_process, log_if_rank_zero
 
 logger = logging.getLogger("CurationDataset")
 
@@ -112,12 +112,10 @@ class CurationDataset(BaseDataset):
         # Perform the sliding window segmentation with caching
         segments_list: List[Dict[str, Any]] = []
         total_data_num = len(self.tokenized_data["non_summary_input_ids"])
-        is_distributed = torch.distributed.is_initialized()
-        should_disable_tqdm = is_distributed and torch.distributed.get_rank() != 0
         for i in tqdm.tqdm(
             range(total_data_num),
             desc="Segmenting data",
-            disable=should_disable_tqdm,
+            disable=not is_main_process(),
         ):
             # Combine the non-summary and summary token ids
             concatenated_token_ids = (
