@@ -45,7 +45,7 @@ class LambadaDataset(BaseDataset):
     def post_process_cache_path(self) -> str:
         return os.path.join(self.tokenized_cache_path, "lambada_post_processed")
 
-    def load_dataset(self) -> Dataset:
+    def load_dataset(self) -> None:
         """Loads and preprocesses the LAMBADA dataset.
 
         Returns:
@@ -63,6 +63,8 @@ class LambadaDataset(BaseDataset):
         else:
             # Load the raw dataset from Hugging Face
             dataset: Dataset = super().load_dataset()
+        # Save the raw data
+        self.raw_data = dataset
         return dataset
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:

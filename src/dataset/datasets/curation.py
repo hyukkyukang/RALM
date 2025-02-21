@@ -113,7 +113,7 @@ class CurationDataset(BaseDataset):
         segments_list: List[Dict[str, Any]] = []
         total_data_num = len(self.tokenized_data["non_summary_input_ids"])
         is_distributed = torch.distributed.is_initialized()
-        should_disable_tqdm = not (is_distributed and torch.distributed.get_rank() == 0)
+        should_disable_tqdm = is_distributed and torch.distributed.get_rank() != 0
         for i in tqdm.tqdm(
             range(total_data_num),
             desc="Segmenting data",

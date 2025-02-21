@@ -6,7 +6,8 @@ from typing import *
 
 import hkkang_utils.concurrent as concurrent_utils
 import tqdm
-from datasets import Dataset, load_dataset
+from datasets import Dataset
+from datasets import load_dataset as hf_load_dataset
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
@@ -156,7 +157,7 @@ class BaseDataset:
         return total_tokens
 
     def load_dataset(self) -> Dataset:
-        self.raw_data = load_dataset(
+        self.raw_data = hf_load_dataset(
             path=self.cfg.huggingface_dataset_name,
             name=self.cfg.subset,
             split=self.cfg.split,
