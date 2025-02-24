@@ -1,6 +1,8 @@
 services:
     RETRO:
-        shm_size: 4gb
+        shm_size: 12gb
+        ulimits:
+            memlock: -1
         image: hyukkyukang/retro:latest
         container_name: RETRO
         stdin_open: true
