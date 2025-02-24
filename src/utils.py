@@ -8,9 +8,7 @@ from pytorch_lightning.utilities import rank_zero_only
 
 def is_main_process() -> bool:
     """Check if the current process is the main process."""
-    is_distributed = torch.distributed.is_initialized()
-    rank = torch.distributed.get_rank()
-    return not (is_distributed and rank != 0)
+    return not (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0)
 
 
 @rank_zero_only
