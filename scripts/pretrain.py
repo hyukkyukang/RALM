@@ -2,6 +2,7 @@ import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 import glob
+import json
 import logging
 import os
 from datetime import timedelta
@@ -15,8 +16,11 @@ import lightning as L
 import psutil
 import torch
 import tqdm
-from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
-                                         ModelSummary)
+from lightning.pytorch.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+    ModelSummary,
+)
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
@@ -61,15 +65,10 @@ def get_total_training_steps(
     return total_dataset_size // (per_device_batch_size * num_gpus) * max_epochs
 
 
-def run_pretraining(cfg: DictConfig) -> None:
-    tag_prefix = "debug_" if cfg.is_debug else ""
-    default_root_dir = os.path.join(
-        cfg.root_dir_path,
-        cfg.log_dir,
-        f"{tag_prefix}{cfg.tag}",
-    )
+def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
+    default_root_dir = os.path.join(cfg.root_dir_path, cfg.log_dir, cfg.tag)
     # Set the precision to high for the models that support it
-    # When using Flex attention inside the rellama model, 
+    # When using Flex attention inside the rellama model,
     # the setting of the precision to high will cause an error
     if cfg.model.name != "rellama":
         torch.set_float32_matmul_precision("high")
@@ -191,33 +190,63 @@ def run_pretraining(cfg: DictConfig) -> None:
     else:
         log_if_rank_zero(logger, f"No checkpoint found to rename in {default_root_dir}")
 
-    return None
+    # Clean the evaluation metrics
+    clean_evaluation_metrics = {}
+    for key, value in trainer.callback_metrics.items():
+        if isinstance(value, torch.Tensor):
+            clean_evaluation_metrics[key] = value.item()
+        else:
+            clean_evaluation_metrics[key] = value
+
+    return clean_evaluation_metrics
+
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    # Pretty string for the config
+    # Change the tag and root_dir_path if the config is debug
+    tag_prefix = "debug_" if cfg.is_debug else ""
+    if cfg.tag == "debug":
+        cfg.is_debug = True
+    else:
+        cfg.root_dir_path = os.path.join(cfg.root_dir_path, tag_prefix)
+
+    # Set slack messenger
+    slack_messenger = slack_utils.SlackMessenger(channel="language-modeling")
+
+    # Set the messages to send to the slack channel
+    start_msg = f"Pretraining started!" if cfg.notify_start else None
+    success_msg = "Succeeded pretraining language model"
+    error_msg = "Failed pretraining language model"
+    # Create slack notification replies
     pretty_cfg: str = OmegaConf.to_yaml(cfg)
-
-    # Capture full command used to launch the script
-    full_command = " ".join(psutil.Process( os.getpid() ).cmdline())
+    full_command = " ".join(psutil.Process(os.getpid()).cmdline())
     number_of_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-
-    with slack_utils.notification(
-        channel="language-modeling",
-        success_msg="Succeeded pretraining language model",
-        error_msg="Failed pretraining language model",
-        comments=[
-            f"Command line: `{full_command}`\n\n",
-            f"Number of GPUs: {number_of_gpus}\n\n",
-            f"with the following config:\n```{pretty_cfg}```\n",
-        ],
+    slack_notification_replies = [
+        f"Command line: `{full_command}`\n\n",
+        f"Number of GPUs: {number_of_gpus}\n\n",
+        f"with the following config:\n```{pretty_cfg}```\n",
+    ]
+    with slack_messenger.notification(
+        start_msg=start_msg,
+        success_msg=success_msg,
+        error_msg=error_msg,
+        replies=slack_notification_replies,
         disable_callback=slack_disable_callback,
+        disable=not cfg.is_debug and not cfg.notify_end,
     ):
-        run_pretraining(cfg)
+        evaluation_metrics: Dict[str, Union[int, float]] = run_pretraining(cfg)
 
     if is_main_process():
+        # Send the callback metrics to the channel
+        if cfg.notify_end:
+            # Send the evaluation metrics to the channel
+            slack_messenger.send_reply(
+                text=f"Evaluation metrics:\n{json.dumps(evaluation_metrics, indent=4)}"
+            )
+
         print("Pretraining script done!")
     return None
+
 
 if __name__ == "__main__":
     logging.basicConfig(

@@ -5,6 +5,8 @@ tag: "default"
 root_dir_path: "/root/RETRO/"
 log_dir: "runs"
 is_debug: False
+notify_start: False
+notify_end: True
 
 # Defaults
 defaults:
