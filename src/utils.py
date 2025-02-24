@@ -1,14 +1,16 @@
 import logging
 from typing import *
-
-import torch
+import os
 from omegaconf import DictConfig, open_dict
 from pytorch_lightning.utilities import rank_zero_only
 
 
 def is_main_process() -> bool:
     """Check if the current process is the main process."""
-    return not (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0)
+    # If LOCAL_RANK is set, use it; otherwise, assume a single-process scenario.
+    if "LOCAL_RANK" in os.environ:
+        return int(os.environ["LOCAL_RANK"]) == 0
+    return True
 
 
 @rank_zero_only

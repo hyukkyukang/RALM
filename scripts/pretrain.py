@@ -211,20 +211,25 @@ def main(cfg: DictConfig) -> None:
         cfg.root_dir_path = os.path.join(cfg.root_dir_path, tag_prefix)
 
     # Set slack messenger
-    slack_messenger = slack_utils.SlackMessenger(channel="language-modeling")
+    slack_channel = os.environ["SLACK_CHANNEL_NAME"]
+    slack_user_id = os.environ["SLACK_USER_ID"]
+    assert (
+        slack_channel is not None and slack_user_id is not None
+    ), "Set the SLACK_CHANNEL_NAME and SLACK_USER_ID in the .env file"
+    slack_messenger = slack_utils.SlackMessenger(channel=slack_channel)
 
     # Set the messages to send to the slack channel
     start_msg = f"Pretraining started!" if cfg.notify_start else None
-    success_msg = "Succeeded pretraining language model"
-    error_msg = "Failed pretraining language model"
+    success_msg = f"<@{slack_user_id}> Succeeded pretraining language model!"
+    error_msg = f"<@{slack_user_id}> Failed pretraining language model"
     # Create slack notification replies
     pretty_cfg: str = OmegaConf.to_yaml(cfg)
     full_command = " ".join(psutil.Process(os.getpid()).cmdline())
     number_of_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     slack_notification_replies = [
-        f"Command line: `{full_command}`\n\n",
+        f"Command line: \n`{full_command}`\n\n",
         f"Number of GPUs: {number_of_gpus}\n\n",
-        f"with the following config:\n```{pretty_cfg}```\n",
+        f"Configuration:\n```{pretty_cfg}```\n",
     ]
     with slack_messenger.notification(
         start_msg=start_msg,
@@ -241,7 +246,7 @@ def main(cfg: DictConfig) -> None:
         if cfg.notify_end:
             # Send the evaluation metrics to the channel
             slack_messenger.send_reply(
-                text=f"Evaluation metrics:\n{json.dumps(evaluation_metrics, indent=4)}"
+                text=f"Evaluation results:\n```{json.dumps(evaluation_metrics, indent=4)}```"
             )
 
         print("Pretraining script done!")
