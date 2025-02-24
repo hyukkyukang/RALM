@@ -4,9 +4,13 @@ from functools import cached_property
 from typing import *
 
 import lightning as L
+import torch
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
+from src.dataset.dataloader import (DistributedResumableRandomSampler,
+                                    ResumableDataLoader)
 from src.dataset.datasets import BaseDataset
 from src.dataset.datasets.registry import DATASET_REGISTRY
 from src.tokenization import ReLlamaTokenizer
@@ -200,15 +204,17 @@ class DataModule(L.LightningDataModule):
                 self._setup_dataset(val_dataset)
         return None
 
-    def train_dataloader(self) -> DataLoader | None:
+    def train_dataloader(self) -> ResumableDataLoader | None:
         if self.is_test:
             return None
-        return DataLoader(
+        # Create our custom sampler
+        sampler = DistributedResumableRandomSampler(self.train_dataset, shuffle=True)
+        return ResumableDataLoader(
             self.train_dataset,
             batch_size=self.cfg.training.per_device_batch_size,
             num_workers=self.cfg.training.num_workers,
             collate_fn=self.train_dataset.collator,
-            shuffle=True,
+            sampler=sampler,
             drop_last=True,
             pin_memory=True,
         )
@@ -219,13 +225,20 @@ class DataModule(L.LightningDataModule):
         # Create a list of DataLoaders for each validation dataset.
         val_dataloaders: List[DataLoader] = []
         for val_dataset in self.val_datasets:
+            sampler = (
+                DistributedSampler(val_dataset, shuffle=False)
+                if torch.distributed.is_available() and torch.distributed.is_initialized()
+                else None
+            )
+            shuffle = False if sampler is not None else None
             val_dataloaders.append(
                 DataLoader(
                     val_dataset,
                     batch_size=self.cfg.validation.per_device_batch_size,
                     num_workers=self.cfg.validation.num_workers,
                     collate_fn=val_dataset.collator,
-                    shuffle=False,
+                    sampler=sampler,
+                    shuffle=shuffle,
                     drop_last=False,
                     pin_memory=True,
                 )
@@ -237,13 +250,20 @@ class DataModule(L.LightningDataModule):
             return None
         test_dataloaders: List[DataLoader] = []
         for test_dataset in self.test_datasets:
+            sampler = (
+                DistributedSampler(test_dataset, shuffle=False)
+                if torch.distributed.is_available() and torch.distributed.is_initialized()
+                else None
+            )
+            shuffle = False if sampler is not None else None
             test_dataloaders.append(
                 DataLoader(
                     test_dataset,
                     batch_size=self.cfg.testing.per_device_batch_size,
                     num_workers=self.cfg.testing.num_workers,
                     collate_fn=test_dataset.collator,
-                    shuffle=False,
+                    sampler=sampler,
+                    shuffle=shuffle,
                     drop_last=False,
                     pin_memory=True,
                 )

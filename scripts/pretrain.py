@@ -16,16 +16,14 @@ import lightning as L
 import psutil
 import torch
 import tqdm
-from lightning.pytorch.callbacks import (
-    LearningRateMonitor,
-    ModelCheckpoint,
-    ModelSummary,
-)
+from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
+                                         ModelSummary)
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
 
 from src.dataset import DataModule
+from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
 from src.model.utils import repair_checkpoint
 from src.training.checkpoint import TimeBasedCheckpoint
@@ -147,11 +145,15 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
             timeout=timedelta(hours=1), static_graph=True, gradient_as_bucket_view=True
         ),
         callbacks=[
+            MyProgressBar(),
             LearningRateMonitor(logging_interval="step"),
             # ModelSummary(max_depth=-1), # Turn this on if you want to see the model architecture (i.e., the parameter names),
             checkpoint_callback,
             time_based_checkpoint_callback,
         ],
+        # We are handling distributed sampler in the DataModule to use a custom training sampler 
+        # that supports checkpointing and resumption of training for DDP
+        use_distributed_sampler=False,
     )
     # Start training
     log_if_rank_zero(logger, "Starting lightning fit...")
