@@ -350,10 +350,22 @@ class LightningModule(L.LightningModule):
             raise ValueError(f"Optimizer {self.cfg.optimizer.name} not supported")
 
         # Extract values
-        warmup_iters = self.cfg.lr_scheduler.warmup_steps
-        total_iters = self.total_optimization_steps
-        min_lr = self.cfg.lr_scheduler.min_learning_rate
-        max_lr = self.cfg.lr_scheduler.max_learning_rate
+        warmup_iters: int = self.cfg.lr_scheduler.warmup_steps
+        intermediate_iters: int = self.cfg.lr_scheduler.intermediate_steps
+        total_iters: int = self.total_optimization_steps
+        max_lr: float = self.cfg.lr_scheduler.max_learning_rate
+        min_lr: float = self.cfg.lr_scheduler.min_learning_rate
+        intermediate_lr: float = self.cfg.lr_scheduler.intermediate_learning_rate
+
+        if intermediate_iters is None:
+            # Check if the configurations are valid
+            assert intermediate_lr > min_lr and intermediate_lr < max_lr, \
+                f"The intermediate learning rate ({intermediate_lr}) must be greater than " \
+                f"the minimum learning rate ({min_lr}) and less than the maximum learning rate ({max_lr})"
+            assert intermediate_iters > warmup_iters, \
+                f"The intermediate steps ({intermediate_iters}) must be greater than the warmup steps ({warmup_iters})"
+            assert intermediate_iters < total_iters, \
+                f"The intermediate steps ({intermediate_iters}) must be less than the total steps ({total_iters})"
 
         # Define a lambda function that wraps the JIT-compiled function
         log_if_rank_zero(
@@ -366,7 +378,7 @@ class LightningModule(L.LightningModule):
             )
         elif self.cfg.lr_scheduler.name == "linear_decay":
             lr_scheduler_fn = lambda it: lr_lambda_linear_decay(
-                it, warmup_iters, total_iters, max_lr, min_lr
+                it, warmup_iters, intermediate_iters, total_iters, max_lr, intermediate_lr, min_lr
             )
         else:
             raise ValueError(

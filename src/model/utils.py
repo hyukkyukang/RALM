@@ -118,28 +118,45 @@ def lr_lambda_cosine_decay(
 
 @torch.jit.script
 def lr_lambda_linear_decay(
-    it: int, warmup_iters: int, total_iters: int, max_lr: float, min_lr: float = 0.0
+    it: int, 
+    warmup_iters: int, 
+    intermediate_iters: int, 
+    total_iters: int, 
+    max_lr: float, 
+    intermediate_lr: float, 
+    min_lr: float = 0.0
 ) -> float:
     """
-    Computes learning rate scaling factor for warmup and linear decay to zero.
+    Computes a learning rate multiplier that follows:
+      - Linear warmup for `warmup_iters`
+      - Linear decay from max_lr to intermediate_lr over `intermediate_iters` steps
+      - Linear decay from intermediate_lr to min_lr over the remaining iterations
 
     Args:
         it (int): Current optimizer step.
         warmup_iters (int): Number of warmup steps.
+        intermediate_iters (int): Number of iterations for decay from max_lr to intermediate_lr.
         total_iters (int): Total optimizer steps.
         max_lr (float): Maximum learning rate.
+        intermediate_lr (float): Learning rate at the end of the intermediate phase.
         min_lr (float): Minimum learning rate.
 
     Returns:
         float: The learning rate multiplier.
     """
     if it < warmup_iters:
-        return float(it) / float(warmup_iters)  # Linear warmup
-    elif it >= total_iters:
-        return min_lr / max_lr
+        # Linear warmup: factor increases from 0 to 1.
+        return float(it) / float(warmup_iters)
+    elif it < warmup_iters + intermediate_iters:
+        # Linear decay from max_lr to intermediate_lr.
+        # Normalized multiplier: at it == warmup_iters -> 1.0, at it == warmup_iters + intermediate_iters -> intermediate_lr / max_lr.
+        progress = float(it - warmup_iters) / float(intermediate_iters)
+        return (max_lr + (intermediate_lr - max_lr) * progress) / max_lr
+    elif it < total_iters:
+        # Linear decay from intermediate_lr to min_lr.
+        # This phase spans from it = warmup_iters + intermediate_iters to it = total_iters.
+        progress = float(it - (warmup_iters + intermediate_iters)) / float(total_iters - (warmup_iters + intermediate_iters))
+        return (intermediate_lr + (min_lr - intermediate_lr) * progress) / max_lr
     else:
-        # Linear decay to min_lr, normalized by max_lr for use with LambdaLR
-        return (
-            min_lr
-            + (max_lr - min_lr) * (total_iters - it) / (total_iters - warmup_iters)
-        ) / max_lr
+        return min_lr / max_lr
+    

@@ -265,7 +265,7 @@ class DataModule(L.LightningDataModule):
                     sampler=sampler,
                     shuffle=shuffle,
                     drop_last=False,
-                    pin_memory=True,
+                    pin_memory=False,
                 )
             )
         return test_dataloaders
