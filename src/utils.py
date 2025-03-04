@@ -1,5 +1,6 @@
 import logging
 import os
+import socket
 from typing import *
 
 import torch
@@ -141,3 +142,8 @@ def check_argument(
 
 def is_torch_compile_possible() -> bool:
     return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7
+
+def get_ip():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]

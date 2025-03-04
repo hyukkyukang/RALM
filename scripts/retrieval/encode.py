@@ -15,6 +15,7 @@ from omegaconf import DictConfig
 
 from src.dataset import DataModule
 from src.retrieval.single_vector_retrieval.encoder import Encoder
+from src.utils import get_ip
 
 logger = logging.getLogger("Encoding")
 
@@ -59,7 +60,8 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
     torch.cuda.set_device(device)
 
     # Create a sub-directory for this GPU process to avoid file name collisions.
-    save_dir = os.path.join(cfg.retrieval.encoding.save_dir_path, f"gpu_{rank}")
+    server_ip: str = get_ip().replace(".", "_")
+    save_dir: str = os.path.join(cfg.retrieval.embedding_dir_path, server_ip, f"gpu_{rank}")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
