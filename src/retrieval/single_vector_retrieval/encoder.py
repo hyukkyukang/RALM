@@ -26,11 +26,11 @@ class Encoder:
         self.src_tokenizer_name = src_tokenizer_name
         self.src_tokenizer = AutoTokenizer.from_pretrained(src_tokenizer_name)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name, device_map=device if device is not None else "auto")
+        self.model = AutoModel.from_pretrained(model_name, device_map=device if device is not None else "auto", attn_implementation=None if is_torch_compile_possible() else "eager" )
         self.save_dir_path = save_dir_path
         self.enable_torch_compile = enable_torch_compile
         self.__post_init__()
-        
+
     def __post_init__(self):
         if not os.path.exists(self.save_dir_path):
             os.makedirs(self.save_dir_path)
@@ -38,6 +38,8 @@ class Encoder:
         if self.enable_torch_compile and is_torch_compile_possible():
             logger.info("Compiling the model with torch compile...")
             self.model = torch.compile(self.model, dynamic=True)
+        else:
+            logger.info("Torch compile is not enabled.")
 
     @torch.no_grad()
     def encode(self, texts: List[str], save_path: str = None) -> Optional[np.ndarray]:
