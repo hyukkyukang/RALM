@@ -1,3 +1,11 @@
+import os
+
+# Set environment variables before importing other modules
+from src.utils import is_torch_compile_possible
+if not is_torch_compile_possible:
+    os.environ["PYTORCH_DISABLE_GPU_KERNELS"] = "1"
+    os.environ["TORCH_COMPILE_DISABLE"] = "1"
+
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -16,6 +24,7 @@ from src.dataset import DataModule
 from src.retrieval.single_vector_retrieval.encoder import Encoder
 
 logger = logging.getLogger("Encoding")
+
 
 def get_partition_indices(rank: int, total_len: int, worker_start_idx_of_current_server: int, total_num_workers: int) -> Tuple[int, int]:
     # Calculate the base size each worker should process
