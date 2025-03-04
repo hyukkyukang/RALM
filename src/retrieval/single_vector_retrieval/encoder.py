@@ -1,5 +1,4 @@
 import warnings
-
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 import logging
@@ -13,11 +12,43 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
-from src.retrieval.single_vector_retrieval.dataloader import StreamingDataset, collate_fn
-                                                              
+from src.retrieval.single_vector_retrieval.dataloader import StreamingDataset, collate_fn                                                              
 from src.utils import is_main_process, is_torch_compile_possible
 
 logger = logging.getLogger("Encoder")
+
+import threading
+import queue
+
+class AsyncSaver:
+    """
+    Saves data to disk asynchronously using a background thread.
+    """
+    def __init__(self, max_queue_size: int = 3):
+        self.queue = queue.Queue(maxsize=max_queue_size)
+        self.thread = threading.Thread(target=self._worker)
+        self.thread.daemon = True  # Allow thread to exit if main process exits
+        self.thread.start()
+
+    def _worker(self):
+        while True:
+            item = self.queue.get()
+            if item is None:  # Sentinel to shutdown
+                break
+            file_path, embeddings = item
+            try:
+                np.save(file_path, embeddings)
+            except Exception as e:
+                logger.error(f"Error saving {file_path}: {e}")
+            self.queue.task_done()
+
+    def save(self, file_path: str, embeddings: np.ndarray):
+        self.queue.put((file_path, embeddings))
+
+    def close(self):
+        # Signal the worker to shutdown and wait for it to finish.
+        self.queue.put(None)
+        self.thread.join()
 
 
 class Encoder:
@@ -26,7 +57,7 @@ class Encoder:
         self.src_tokenizer_name = src_tokenizer_name
         self.src_tokenizer = AutoTokenizer.from_pretrained(src_tokenizer_name)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name, device_map=device if device is not None else "auto", attn_implementation=None if is_torch_compile_possible() else "eager" )
+        self.model = AutoModel.from_pretrained(model_name, device_map=device if device is not None else "auto", attn_implementation="eager")
         self.save_dir_path = save_dir_path
         self.enable_torch_compile = enable_torch_compile
         self.chunk_size = chunk_size
@@ -67,10 +98,10 @@ class Encoder:
         if dataset_start_idx is None:
             dataset_start_idx = 0
 
-        # Use the now-external StreamingDataset class
+        # Use the external StreamingDataset class
         streaming_dataset = StreamingDataset(dataset, dataset_start_idx, dataset_end_idx, self.src_tokenizer, self.tokenizer, self.chunk_size)
 
-        # Use a lambda to call the external collate_fn with the required parameters
+        # Create the DataLoader with the external collate_fn.
         dataloader = DataLoader(
             streaming_dataset, 
             batch_size=batch_size,
@@ -95,29 +126,33 @@ class Encoder:
         all_embeddings: List[np.ndarray] = []
         if save_in_disk:
             logger.info(f"Saving embeddings to {self.save_dir_path}")
+            # Instantiate AsyncSaver to perform disk writes asynchronously.
+            async_saver = AsyncSaver(max_queue_size=3)
         disable_tqdm = not is_main_process()
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Encoding dataset", total=len(dataloader), disable=disable_tqdm)):
             bsize = batch["input_ids"].shape[0] // self.chunk_size
-            # Get the index of the first embedding in the batch.
-            emb_idx = dataset_start_idx + batch_idx * batch_size
-            # Get the path to the file that will store the embeddings.
+            # Calculate the starting index for the current batch.
+            emb_idx = (dataset_start_idx or 0) + batch_idx * batch_size
+            # Build the file path for this batch.
             file_path = os.path.join(self.save_dir_path, f"embeddings_{emb_idx}_{bsize}.npy")
-            # If the file already exists, skip the batch.
+            # Skip batch if file already exists.
             if save_in_disk and os.path.exists(file_path):
                 continue
-            # Pass the pre-tokenized batch directly to the model.
-            # Move the batch to the correct device.
+            # Move the batch to the model device.
             batch = {key: value.to(self.model.device) for key, value in batch.items()}
             output = self.model(**batch)
             embeddings = output.last_hidden_state[:, 0, :].cpu().numpy()  # CLS token representation
 
             if save_in_disk:
-                np.save(file_path, embeddings)
+                # Enqueue saving the embeddings asynchronously.
+                async_saver.save(file_path, embeddings)
             else:
                 all_embeddings.append(embeddings)
         
         if save_in_disk:
+            # Wait for all asynchronous saves to complete.
+            async_saver.close()
             return None
         else:
-            # Concatenate and return all embeddings.
+            # Concatenate and return embeddings.
             return np.concatenate(all_embeddings, axis=0)
