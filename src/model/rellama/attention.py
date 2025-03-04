@@ -12,7 +12,10 @@ from transformers.models.llama.modeling_llama import (ALL_ATTENTION_FUNCTIONS,
                                                       apply_rotary_pos_emb,
                                                       eager_attention_forward)
 
-flex_attention = torch.compile(flex_attention, dynamic=False, mode="max-autotune")
+from src.utils import is_torch_compile_possible
+
+if is_torch_compile_possible():
+    flex_attention = torch.compile(flex_attention, dynamic=False, mode="max-autotune")
 
 logger = logging.getLogger("ReLlamaAttention")
 

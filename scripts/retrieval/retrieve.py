@@ -11,41 +11,60 @@ import hkkang_utils.concurrent as concurrent_utils
 import hkkang_utils.misc as misc_utils
 import hkkang_utils.slack as slack_utils
 import hydra
+from datasets import Dataset
 from omegaconf import DictConfig
 
-from datasets import Dataset
 from src.dataset import DataModule
-from src.utils import is_main_process
+from retrieval.multi_vector_retrieval.xtr_warp import Retriever
+from src.utils import slack_disable_callback
 
 logger = logging.getLogger("Retrieval")
 
-def slack_disable_callback() -> bool:
-    return not is_main_process()
 
 
-def retrieval(query: str) -> List[int]:
-    """Retrieve the index of the retrieved data from the query."""
-    raise NotImplementedError("Retrieval is not implemented yet.")
+def get_global_worker_idx(worker_start_idx_of_current_server: int, current_worker_local_idx: int) -> int:
+    # Get the start and end indices for the current worker
+    worker_global_idx = worker_start_idx_of_current_server + current_worker_local_idx
+    return worker_global_idx
 
-def single_retrieval(process_idx: int, data_module: DataModule, indices: List[int]) -> str:
+def get_dataset_range_for_current_worker(total_num_items: int, total_num_workers: int, worker_start_idx_of_current_server: int, current_worker_local_idx: int) -> Tuple[int, int]:
+    # Split the dataset into num_workers_in_current_server parts
+    items_per_process = total_num_items // total_num_workers
+    # Get the start and end indices for the current worker
+    worker_global_idx = get_global_worker_idx(worker_start_idx_of_current_server, current_worker_local_idx)
+    # Get the dataset range for the current worker
+    start_idx = worker_global_idx * items_per_process
+    end_idx = start_idx + items_per_process
+    
+    return start_idx, end_idx
+
+def single_retrieval(process_idx: int, data_module: DataModule, global_cfg: DictConfig) -> str:
+    # Initialize the retriever
+    retriever = Retriever(address=global_cfg.retrieval.address, port=global_cfg.retrieval.port)
+    # Get the global process idx
+    global_process_idx = get_global_worker_idx(worker_start_idx_of_current_server=global_cfg.retrieval.worker_start_idx_of_current_server, current_worker_local_idx=process_idx)
+    # Get the dataset range for the current worker
+    start_idx, end_idx = get_dataset_range_for_current_worker(total_num_items=len(data_module), total_num_workers=global_cfg.retrieval.total_num_workers, worker_start_idx_of_current_server=global_cfg.retrieval.worker_start_idx_of_current_server, current_worker_local_idx=process_idx)
+
+    # Get the retrieved data
     retrieved_indices_list: List[List[int]] = []
-    for idx in indices:
+    for idx in range(start_idx, end_idx):
         # Get the item
         item = data_module[idx]
         # Get the retrieved data
-        decoded_text = data_module.tokenizer.decode(item["input_ids"], skip_special_tokens=True)
-        retrieved_data_indices: List[int] = retrieval(decoded_text)
+        decoded_text: List[str] = data_module.tokenizer.decode(item["input_ids"], skip_special_tokens=True)
+        retrieved_data_indices: List[int] = retriever(decoded_text)
         # Save the retrieved data
         retrieved_indices_list.append(retrieved_data_indices)
     # Save the retrieved indices
-    saved_path = os.path.join(data_module.retrieved_data_cache_path, f"retrieved_indices_{process_idx}.parquet")
+    saved_path = os.path.join(data_module.retrieved_data_cache_path, f"retrieved_indices_{global_process_idx}.parquet")
     # Save the retrieved indices
     with open(saved_path, "wb") as f:
         pickle.dump(retrieved_indices_list, f)
     return saved_path
 
 
-def parallel_retrieval(data_module: DataModule, num_workers: int = 64) -> None:
+def parallel_retrieval(data_module: DataModule, num_workers: int = 64, global_cfg: DictConfig = None) -> None:
     # Get total number of items
     total_items = len(data_module)
     # Get number of items per process
@@ -59,10 +78,11 @@ def parallel_retrieval(data_module: DataModule, num_workers: int = 64) -> None:
             process_idx=i,
             data_module=data_module,
             indices=range(i * items_per_process, (i + 1) * items_per_process),
+            global_cfg=global_cfg,
         )
     # Join all processes
     multiprocessor.join()
-    
+
     # Retrieve the results
     saved_paths: List[str] = multiprocessor.results
 
@@ -76,11 +96,11 @@ def parallel_retrieval(data_module: DataModule, num_workers: int = 64) -> None:
     # Save the retrieved indices
     retrieval_dataset: Dataset = Dataset.from_list(retrieved_indices_list)
     retrieval_dataset.save_to_disk(data_module.retrieved_data_cache_path)
-    
+
     # Remove the temporary datasets
     for saved_path in saved_paths:
         os.remove(saved_path)
-        
+
     return None
 
 
@@ -97,10 +117,10 @@ def main(cfg: DictConfig) -> None:
     # Conduct retrieval for validation data
     for dataset in data_module.val_datasets:
         logger.info(f"Conducting retrieval for validation data {dataset.name}...")
-        parallel_retrieval(dataset)
+        parallel_retrieval(dataset, global_cfg=cfg)
 
     logger.info(f"Retrieval complete. Total dataset size: {len(data_module)}")
-    
+
     return None
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
 from src.model.utils import repair_checkpoint
 from src.training.checkpoint import TimeBasedCheckpoint
-from src.utils import add_config, is_main_process, log_if_rank_zero
+from src.utils import add_config, is_main_process, log_if_rank_zero, slack_disable_callback, is_torch_compile_possible
 
 logger = logging.getLogger("PL_Trainer")
 
@@ -174,7 +174,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
     if (
         is_main_process()
         and cfg.use_torch_compile
-        and torch.cuda.get_device_capability()[0] >= 7
+        and is_torch_compile_possible()
     ):
         # Find all files ending with .ckpt in the default_root_dir
         ckpt_file_paths: List[str] = glob.glob(os.path.join(default_root_dir, "*.ckpt"))

@@ -12,7 +12,6 @@ from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import (INVALID_TOKEN_ID,
                                perform_sliding_window_segmentation)
-from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 from src.utils import is_main_process, log_if_rank_zero
 
@@ -28,9 +27,8 @@ class CurationDataset(BaseDataset):
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
         retrieved_data: Optional[Dataset] = None,
-        retriever: Optional[Retriever] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data)
 
     @cached_property
     def collator(self) -> "CurationDataCollator":

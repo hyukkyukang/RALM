@@ -1,0 +1,30 @@
+# Retrieval configs
+return_as_str: False
+topk: 3
+
+# For connection to the retrieval server
+address: "http://localhost"
+port: 7000
+
+# For saving the encoded vector embeddings
+embedding_dir_path: "data/retrieval/embeddings"
+
+# For encoding
+encoding:
+  model_name: joe32140/ModernBERT-large-msmarco
+  batch_size: 80
+  num_total_workers: 37
+  worker_start_idx_of_current_server: 2
+  num_workers_in_current_server: 8
+  num_dataloader_workers: 4
+  passage_size: 512
+  chunk_size: 64
+
+# For indexing
+indexing:
+  index_path: "data/retrieval/indexes/faiss_ivfpq.index"
+  num_pq_subquantizers: 64
+  bits_per_subvector: 8
+  train_size: 1_000_000
+  batch_size: 5_000_000
+  dim: 1024
