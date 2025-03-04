@@ -1,11 +1,4 @@
 import os
-
-# Set environment variables before importing other modules
-from src.utils import is_torch_compile_possible
-if not is_torch_compile_possible:
-    os.environ["PYTORCH_DISABLE_GPU_KERNELS"] = "1"
-    os.environ["TORCH_COMPILE_DISABLE"] = "1"
-
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
