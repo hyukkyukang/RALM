@@ -10,22 +10,70 @@ logger = logging.getLogger("StreamingDataset")
 # Define this outside of any method
 class StreamingDataset(torch.utils.data.IterableDataset):
     def __init__(self, dataset: Dataset, start_idx: int, end_idx: int, src_tokenizer: PreTrainedTokenizer, tgt_tokenizer: PreTrainedTokenizer, chunk_size: int = 64) -> None:
+        """
+        Args:
+            dataset (Dataset): Hugging Face Dataset.
+            start_idx (int): Start index of the dataset partition.
+            end_idx (int): End index of the dataset partition.
+            src_tokenizer (PreTrainedTokenizer): Tokenizer for source text.
+            tgt_tokenizer (PreTrainedTokenizer): Tokenizer for target text.
+            chunk_size (int, optional): Chunk size (default: 64).
+        """
+        super().__init__()
         self.dataset = dataset
         self.start_idx = start_idx
-        self.end_idx = end_idx
+        self.end_idx = min(end_idx, len(dataset))  # Ensure end_idx does not exceed dataset size
         self.src_tokenizer = src_tokenizer
         self.tgt_tokenizer = tgt_tokenizer
         self.chunk_size = chunk_size
 
+        self.total_size = self.end_idx - self.start_idx  # Effective dataset size after manual partition
+        self.additional_tok_length = 24
+
+    def _partition_data(self, worker_id: int, num_workers: int):
+        """
+        Splits manually selected dataset range among workers.
+
+        Args:
+            worker_id (int): Worker ID.
+            num_workers (int): Total number of workers.
+
+        Returns:
+            range: A range of dataset indices assigned to this worker.
+        """
+        per_worker = self.total_size // num_workers
+        remainder = self.total_size % num_workers  # Handle uneven splits
+
+        start = self.start_idx + worker_id * per_worker + min(worker_id, remainder)
+        end = start + per_worker + (1 if worker_id < remainder else 0)
+
+        return range(start, end)
+
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
-        # Process each item in the dataset range
-        for idx in range(self.start_idx, self.end_idx):
-            # Use the correct indexing into the dataset
+        """
+        Iterates over the dataset partition assigned to this worker.
+
+        Returns:
+            Iterator[Dict[str, torch.Tensor]]: Processed dataset batches.
+        """
+        worker_info = torch.utils.data.get_worker_info()
+        
+        # First partitioning: Manually specified start_idx to end_idx
+        if worker_info is None:
+            data_range = range(self.start_idx, self.end_idx)
+        else:
+            # Second partitioning: Distribute this range among workers
+            data_range = self._partition_data(worker_info.id, worker_info.num_workers)
+
+        logger.info(f"Worker {worker_info.id if worker_info else 0}: Processing indices {data_range.start} to {data_range.stop}")
+
+        for idx in data_range:
             yield self._process_item(self.dataset[idx], idx)
 
     def __len__(self) -> int:
-        return self.end_idx - self.start_idx
-    
+        """Returns the dataset length after manual partitioning."""
+        return self.total_size
+
     def _process_item(self, item: Dict[str, Any], passage_idx: int) -> Dict[str, torch.Tensor]:
         input_ids = item["input_ids"]
         
@@ -50,7 +98,7 @@ class StreamingDataset(torch.utils.data.IterableDataset):
                 return_tensors="pt", 
                 padding="max_length",  # Use max_length to ensure consistent size
                 truncation=True,
-                max_length=self.chunk_size+24,
+                max_length=self.chunk_size+self.additional_tok_length,
                 return_attention_mask=True
             )
 
@@ -63,8 +111,8 @@ class StreamingDataset(torch.utils.data.IterableDataset):
         stacked_attention_masks = torch.stack(all_attention_masks)
 
         # Check dimensions
-        if stacked_input_ids.shape[1] != self.chunk_size+24:
-            raise ValueError(f"Expected second dimension to be {self.chunk_size+24}, got {stacked_input_ids.shape[1]}")
+        if stacked_input_ids.shape[1] != self.chunk_size+self.additional_tok_length:
+            raise ValueError(f"Expected second dimension to be {self.chunk_size+self.additional_tok_length}, got {stacked_input_ids.shape[1]}")
 
         return {
             "input_ids": stacked_input_ids,
