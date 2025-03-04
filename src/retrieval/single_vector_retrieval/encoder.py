@@ -75,7 +75,8 @@ class Encoder:
             streaming_dataset, 
             batch_size=batch_size,
             num_workers=num_dataloader_workers,
-            collate_fn=collate_fn
+            collate_fn=collate_fn,
+            pin_memory=True
         )
         return dataloader
 

@@ -9,9 +9,9 @@ port: 7000
 encoding:
   save_dir_path: "data/retrieval/embeddings"
   model_name: joe32140/ModernBERT-large-msmarco
-  batch_size: 512
-  num_total_workers: 28
-  worker_start_idx_of_current_server: 2
-  num_workers_in_current_server: 8
+  batch_size: 200
+  num_total_workers: 37
+  worker_start_idx_of_current_server: 0
+  num_workers_in_current_server: 2
   num_dataloader_workers: 4
- 
+  chunk_size: 64
