@@ -12,12 +12,12 @@ embedding_dir_path: "data/retrieval/embeddings"
 # For encoding
 encoding:
   model_name: joe32140/ModernBERT-large-msmarco
-  batch_size: 80
+  batch_size: 1
   num_total_workers: 37
-  worker_start_idx_of_current_server: 2
-  num_workers_in_current_server: 8
-  num_dataloader_workers: 4
-  passage_size: 512
+  worker_start_idx_of_current_server: 0
+  num_workers_in_current_server: 1
+  num_dataloader_workers: 0
+  passage_size: 1024
   chunk_size: 64
 
 # For indexing

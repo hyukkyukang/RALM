@@ -60,7 +60,7 @@ class Encoder:
         self.src_tokenizer_name = src_tokenizer_name
         self.src_tokenizer = AutoTokenizer.from_pretrained(src_tokenizer_name)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name, device_map=device if device is not None else "auto", attn_implementation="eager")
+        self.model = AutoModel.from_pretrained(model_name, device_map="auto" if device is None else device, attn_implementation=None if is_torch_compile_possible() else  "eager")
         self.save_dir_path = save_dir_path
         self.enable_torch_compile = enable_torch_compile
         self.chunk_size = chunk_size

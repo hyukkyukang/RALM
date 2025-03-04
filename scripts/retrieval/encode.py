@@ -71,7 +71,7 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
         src_tokenizer_name=cfg.model.base_name,
         save_dir_path=save_dir,
         device=device,
-        enable_torch_compile=True,
+        enable_torch_compile=cfg.use_torch_compile,
         chunk_size=cfg.retrieval.encoding.chunk_size,
         passage_size=cfg.retrieval.encoding.passage_size
     )
