@@ -17,6 +17,7 @@ encoding:
   worker_start_idx_of_current_server: 2
   num_workers_in_current_server: 8
   num_dataloader_workers: 4
+  passage_size: 512
   chunk_size: 64
 
 # For indexing

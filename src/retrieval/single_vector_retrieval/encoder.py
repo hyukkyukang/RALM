@@ -3,6 +3,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 
 import logging
 import os
+from functools import cached_property
 from typing import List, Optional
 
 import numpy as np
@@ -12,13 +13,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
-from src.retrieval.single_vector_retrieval.dataloader import StreamingDataset, collate_fn                                                              
+from src.retrieval.single_vector_retrieval.dataloader import (StreamingDataset,
+                                                              collate_fn)
 from src.utils import is_main_process, is_torch_compile_possible
 
 logger = logging.getLogger("Encoder")
 
-import threading
 import queue
+import threading
+
 
 class AsyncSaver:
     """
@@ -52,7 +55,7 @@ class AsyncSaver:
 
 
 class Encoder:
-    def __init__(self, model_name: str, src_tokenizer_name: str, save_dir_path: str, device: torch.device="cpu", enable_torch_compile: bool=True, chunk_size: int=64):
+    def __init__(self, model_name: str, src_tokenizer_name: str, save_dir_path: str, device: torch.device="cpu", enable_torch_compile: bool=True, chunk_size: int=64, passage_size: int=512):
         self.model_name = model_name
         self.src_tokenizer_name = src_tokenizer_name
         self.src_tokenizer = AutoTokenizer.from_pretrained(src_tokenizer_name)
@@ -61,6 +64,7 @@ class Encoder:
         self.save_dir_path = save_dir_path
         self.enable_torch_compile = enable_torch_compile
         self.chunk_size = chunk_size
+        self.passage_size = passage_size
         self.__post_init__()
 
     def __post_init__(self):
@@ -72,6 +76,9 @@ class Encoder:
             self.model = torch.compile(self.model, dynamic=True)
         else:
             logger.info("Torch compile is not enabled.")
+    @cached_property
+    def num_chunk_per_passage(self) -> int:
+        return self.passage_size // self.chunk_size
 
     @torch.no_grad()
     def encode(self, texts: List[str], save_path: str = None) -> Optional[np.ndarray]:
@@ -130,7 +137,7 @@ class Encoder:
             async_saver = AsyncSaver(max_queue_size=3)
         disable_tqdm = not is_main_process()
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Encoding dataset", total=len(dataloader), disable=disable_tqdm)):
-            bsize = batch["input_ids"].shape[0] // self.chunk_size
+            bsize: int = batch["input_ids"].shape[0] // self.num_chunk_per_passage
             # Calculate the starting index for the current batch.
             emb_idx = (dataset_start_idx or 0) + batch_idx * batch_size
             # Build the file path for this batch.

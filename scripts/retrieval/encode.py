@@ -72,7 +72,8 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
         save_dir_path=save_dir,
         device=device,
         enable_torch_compile=True,
-        chunk_size=cfg.retrieval.encoding.chunk_size
+        chunk_size=cfg.retrieval.encoding.chunk_size,
+        passage_size=cfg.retrieval.encoding.passage_size
     )
 
     # Load the dataset from disk.
