@@ -21,7 +21,7 @@ logger = logging.getLogger("Encoder")
 
 
 class Encoder:
-    def __init__(self, model_name: str, src_tokenizer_name: str, save_dir_path: str, device: torch.device="cpu", enable_torch_compile: bool=True):
+    def __init__(self, model_name: str, src_tokenizer_name: str, save_dir_path: str, device: torch.device="cpu", enable_torch_compile: bool=True, chunk_size: int=64):
         self.model_name = model_name
         self.src_tokenizer_name = src_tokenizer_name
         self.src_tokenizer = AutoTokenizer.from_pretrained(src_tokenizer_name)
@@ -29,6 +29,7 @@ class Encoder:
         self.model = AutoModel.from_pretrained(model_name, device_map=device if device is not None else "auto", attn_implementation=None if is_torch_compile_possible() else "eager" )
         self.save_dir_path = save_dir_path
         self.enable_torch_compile = enable_torch_compile
+        self.chunk_size = chunk_size
         self.__post_init__()
 
     def __post_init__(self):
@@ -67,7 +68,7 @@ class Encoder:
             dataset_start_idx = 0
 
         # Use the now-external StreamingDataset class
-        streaming_dataset = StreamingDataset(dataset, dataset_start_idx, dataset_end_idx, self.src_tokenizer, self.tokenizer)
+        streaming_dataset = StreamingDataset(dataset, dataset_start_idx, dataset_end_idx, self.src_tokenizer, self.tokenizer, self.chunk_size)
 
         # Use a lambda to call the external collate_fn with the required parameters
         dataloader = DataLoader(
@@ -95,7 +96,7 @@ class Encoder:
             logger.info(f"Saving embeddings to {self.save_dir_path}")
         disable_tqdm = not is_main_process()
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Encoding dataset", total=len(dataloader), disable=disable_tqdm)):
-            bsize = batch["input_ids"].shape[0]
+            bsize = batch["input_ids"].shape[0] // self.chunk_size
             # Get the index of the first embedding in the batch.
             emb_idx = dataset_start_idx + batch_idx * batch_size
             # Get the path to the file that will store the embeddings.

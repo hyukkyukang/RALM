@@ -40,7 +40,7 @@ def get_partition_indices(rank: int, total_len: int, worker_start_idx_of_current
     else:
         start_idx += remainder
         end_idx = start_idx + base_size
-    
+
     # Safety check to ensure we don't exceed total_len
     end_idx = min(end_idx, total_len)
     
@@ -69,7 +69,8 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
         src_tokenizer_name=cfg.model.base_name,
         save_dir_path=save_dir,
         device=device,
-        enable_torch_compile=True
+        enable_torch_compile=True,
+        chunk_size=cfg.retrieval.encoding.chunk_size
     )
 
     # Load the dataset from disk.
