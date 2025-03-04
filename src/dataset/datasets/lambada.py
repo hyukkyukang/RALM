@@ -9,7 +9,6 @@ from omegaconf import DictConfig
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import split_text_into_context_and_last_word
-from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
 
@@ -26,9 +25,8 @@ class LambadaDataset(BaseDataset):
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
         retrieved_data: Optional[Dataset] = None,
-        retriever: Optional[Retriever] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
+        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data)
 
     @cached_property
     def collator(self) -> "LambadaDataCollator":

@@ -22,7 +22,7 @@ from src.model.utils import (add_to_tensor_dict_safely, get_compile_decorator,
                              lr_lambda_cosine_decay, lr_lambda_linear_decay)
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.registry import TOKENIZER_REGISTRY
-from src.utils import log_if_rank_zero
+from src.utils import is_torch_compile_possible, log_if_rank_zero
 
 logger = logging.getLogger("LightningModule")
 
@@ -85,7 +85,7 @@ class LightningModule(L.LightningModule):
         if self.cfg.training.get(
             "use_torch_compile", self.cfg.get("use_torch_compile", False)
         ):
-            if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7:
+            if is_torch_compile_possible():
                 log_if_rank_zero(
                     logger,
                     "Compiling the model with torch compile...",

@@ -11,7 +11,6 @@ from datasets import load_dataset as hf_load_dataset
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
-from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
@@ -26,7 +25,6 @@ class BaseDataset:
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
         retrieved_data: Optional[Dataset] = None,
-        retriever: Optional[Retriever] = None,
     ):
         self.cfg = cfg
         self.global_cfg = global_cfg
@@ -39,8 +37,6 @@ class BaseDataset:
         self.post_processed_data: Optional[Dataset] = post_processed_data
         # Dataset objects that is retrieved after post-processing
         self.retrieved_data: Optional[Dataset] = retrieved_data
-        self.retriever: Optional[Retriever] = retriever
-
     def __len__(self):
         if self.post_processed_data is None:
             return 0

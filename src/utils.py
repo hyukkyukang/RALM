@@ -1,8 +1,14 @@
 import logging
-from typing import *
 import os
+from typing import *
+
+import torch
 from omegaconf import DictConfig, open_dict
 from pytorch_lightning.utilities import rank_zero_only
+
+
+def slack_disable_callback() -> bool:
+    return not is_main_process()
 
 
 def is_main_process() -> bool:
@@ -131,3 +137,7 @@ def check_argument(
         if name not in dic and arg_type == bool:
             dic[name] = False
     return True
+
+
+def is_torch_compile_possible() -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7
