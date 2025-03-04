@@ -76,35 +76,30 @@ class StreamingDataset(torch.utils.data.IterableDataset):
 
     def _process_item(self, item: Dict[str, Any], passage_idx: int) -> Dict[str, torch.Tensor]:
         input_ids = item["input_ids"]
-        
+
         # Convert to tensor if it's not already
         if not isinstance(input_ids, torch.Tensor):
             input_ids = torch.tensor(input_ids)
-            
+
         # Split the input_ids into chunks of chunk_size
         chunks = [input_ids[i:i+self.chunk_size] for i in range(0, len(input_ids), self.chunk_size)]
 
-        all_input_ids = []
-        all_attention_masks = []
+        # Decode all chunks at once
+        texts: List[str] = self.src_tokenizer.batch_decode(chunks, skip_special_tokens=True)
 
-        for chunk in chunks:
-            # Decode the input_ids to text using the source tokenizer
-            # Consider whether you really want to skip special tokens
-            text = self.src_tokenizer.decode(chunk, skip_special_tokens=True)
+        # Tokenize all texts in a single batch
+        tokenized: Dict[str, torch.Tensor] = self.tgt_tokenizer(
+            texts,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=self.chunk_size+self.additional_tok_length,
+            return_attention_mask=True
+        )
 
-            # Tokenize the text using the target tokenizer
-            tokenized = self.tgt_tokenizer(
-                text,
-                return_tensors="pt", 
-                padding="max_length",  # Use max_length to ensure consistent size
-                truncation=True,
-                max_length=self.chunk_size+self.additional_tok_length,
-                return_attention_mask=True
-            )
-
-            # Remove batch dimension (squeeze) before adding to list
-            all_input_ids.append(tokenized["input_ids"].squeeze(0))
-            all_attention_masks.append(tokenized["attention_mask"].squeeze(0))
+        # Split the batch results into individual tensors
+        all_input_ids: List[torch.Tensor] = [tensor for tensor in tokenized["input_ids"]]
+        all_attention_masks: List[torch.Tensor] = [tensor for tensor in tokenized["attention_mask"]]
 
         # Stack
         stacked_input_ids = torch.stack(all_input_ids)
@@ -126,6 +121,9 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         "input_ids": [],
         "attention_mask": []
     }
+
+    # assert passage_idx are continuous
+    assert all(item["passage_idx"] == batch[0]["passage_idx"] + i for i, item in enumerate(batch)), f"Passage idx are not continuous"
 
     # Collect all tensors from the batch
     for item in batch:
