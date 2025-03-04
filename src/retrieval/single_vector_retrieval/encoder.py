@@ -95,6 +95,7 @@ class Encoder:
             logger.info(f"Saving embeddings to {self.save_dir_path}")
         disable_tqdm = not is_main_process()
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Encoding dataset", total=len(dataloader), disable=disable_tqdm)):
+            bsize = batch["input_ids"].shape[0]
             # Get the index of the first embedding in the batch.
             emb_idx = dataset_start_idx + batch_idx * batch_size
             # Get the path to the file that will store the embeddings.
@@ -104,7 +105,6 @@ class Encoder:
                 continue
             # Pass the pre-tokenized batch directly to the model.
             # Move the batch to the correct device.
-            bsize = batch["input_ids"].shape[0]
             batch = {key: value.to(self.model.device) for key, value in batch.items()}
             output = self.model(**batch)
             embeddings = output.last_hidden_state[:, 0, :].cpu().numpy()  # CLS token representation
