@@ -139,14 +139,14 @@ class Encoder:
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Encoding dataset", total=len(dataloader), disable=disable_tqdm)):
             bsize: int = batch["input_ids"].shape[0] // self.num_chunk_per_passage
             # Calculate the starting index for the current batch.
-            emb_idx = (dataset_start_idx or 0) + batch_idx * batch_size
+            passage_idx = batch["passage_idx"]
             # Build the file path for this batch.
-            file_path = os.path.join(self.save_dir_path, f"embeddings_{emb_idx}_{bsize}.npy")
+            file_path = os.path.join(self.save_dir_path, f"embeddings_{passage_idx}_{bsize}.npy")
             # Skip batch if file already exists.
             if save_in_disk and os.path.exists(file_path):
                 continue
             # Move the batch to the model device.
-            batch = {key: value.to(self.model.device) for key, value in batch.items()}
+            batch = {key: value.to(self.model.device) for key, value in batch.items() if key != "passage_idx"}
             output = self.model(**batch)
             embeddings = output.last_hidden_state[:, 0, :].cpu().numpy()  # CLS token representation
 
