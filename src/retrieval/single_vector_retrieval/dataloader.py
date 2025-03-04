@@ -34,10 +34,10 @@ class StreamingDataset(torch.utils.data.IterableDataset):
                 max_length=512,
                 return_attention_mask=True
             )
-            
+
             # Remove the batch dimension
             tokenized = {k: v.squeeze(0) for k, v in tokenized.items()}
-            
+
             yield tokenized
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
@@ -54,7 +54,6 @@ class StreamingDataset(torch.utils.data.IterableDataset):
             max_length=512,
             return_attention_mask=True
         )
-        print(tokenized)
         return tokenized
 
     def __len__(self) -> int:
