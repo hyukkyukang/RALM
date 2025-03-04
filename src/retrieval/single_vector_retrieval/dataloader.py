@@ -42,10 +42,10 @@ class StreamingDataset(torch.utils.data.IterableDataset):
             
         # Split the input_ids into chunks of chunk_size
         chunks = [input_ids[i:i+self.chunk_size] for i in range(0, len(input_ids), self.chunk_size)]
-        
+
         all_input_ids = []
         all_attention_masks = []
-        
+
         for chunk in chunks:
             # Decode the input_ids to text using the source tokenizer
             # Consider whether you really want to skip special tokens
@@ -57,10 +57,10 @@ class StreamingDataset(torch.utils.data.IterableDataset):
                 return_tensors="pt", 
                 padding="max_length",  # Use max_length to ensure consistent size
                 truncation=True,
-                max_length=512,
+                max_length=self.chunk_size+24,
                 return_attention_mask=True
             )
-            
+
             # Remove batch dimension (squeeze) before adding to list
             all_input_ids.append(tokenized["input_ids"].squeeze(0))
             all_attention_masks.append(tokenized["attention_mask"].squeeze(0))
@@ -70,8 +70,8 @@ class StreamingDataset(torch.utils.data.IterableDataset):
         stacked_attention_masks = torch.stack(all_attention_masks)
 
         # Check dimensions
-        if stacked_input_ids.shape[1] != 512:
-            raise ValueError(f"Expected second dimension to be 512, got {stacked_input_ids.shape[1]}")
+        if stacked_input_ids.shape[1] != self.chunk_size+24:
+            raise ValueError(f"Expected second dimension to be {self.chunk_size+24}, got {stacked_input_ids.shape[1]}")
 
         return {
             "input_ids": stacked_input_ids,
