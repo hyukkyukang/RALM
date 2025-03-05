@@ -1,0 +1,10 @@
+mnli_matched:
+  name: mnli_matched
+  huggingface_dataset_name: nyu-mll/glue
+  subset: mnli
+  split_mapping:
+    train: train
+    validation: validation_matched
+    test: validation_matched
+  dir_name: data
+  remove_columns: ["label", "premise", "hypothesis"]

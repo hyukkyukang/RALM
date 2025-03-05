@@ -4,9 +4,10 @@ natural_language_understanding:
     - cola
     - sst2
     - mrpc
+    - mnli_matched
+    - mnli_mismatched
+    - qnli
+    - rte
+    - wnli
+    - qqp
     # - stsb
-    # - qqp
-    # - mnli
-    # - qnli
-    # - rte
-    # - wnli

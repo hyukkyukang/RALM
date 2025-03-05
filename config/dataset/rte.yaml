@@ -1,0 +1,10 @@
+rte:
+  name: rte
+  huggingface_dataset_name: nyu-mll/glue
+  subset: rte
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "sentence1", "sentence2"]

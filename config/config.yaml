@@ -20,6 +20,12 @@ defaults:
         - cola
         - sst2
         - mrpc
+        - mnli_matched
+        - mnli_mismatched
+        - qnli
+        - rte
+        - wnli
+        - qqp
     - task:
         - last_word_prediction
         - next_token_prediction

@@ -1,0 +1,10 @@
+wnli:
+  name: wnli
+  huggingface_dataset_name: nyu-mll/glue
+  subset: wnli
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "sentence1", "sentence2"]
