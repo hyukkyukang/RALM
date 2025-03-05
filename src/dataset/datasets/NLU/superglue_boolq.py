@@ -22,15 +22,14 @@ def text_to_text_transform_for_boolq(example: Dict[str, Any]) -> Dict[str, Any]:
         f"Your answer should be either 'Yes' or 'No'.\n"
         f"Answer:"
     )
-    
+
     target = "Yes" if example["label"] == 1 else "No"
-    
+
     return {
         "text": f"{context} {target}",
         "context": context,
         "target": target,
         "choices": ["Yes", "No"],
-        "idx": example.get("idx", 0),
     }
 
 class SuperGLUEBoolQDataset(BaseDataset):
