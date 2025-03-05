@@ -11,9 +11,12 @@ from tensordict import TensorDict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
-from src.evaluation.last_word_prediction import evaluate_last_word_prediction
-from src.evaluation.next_token_prediction import (
+from src.evaluation.LM.last_word_prediction import \
+    evaluate_last_word_prediction
+from src.evaluation.LM.next_token_prediction import (
     compute_perplexity_and_bpb, evaluate_next_token_prediction)
+from src.evaluation.NLU.text_to_text_prediction import \
+    evaluate_text_to_text_prediction
 from src.model.llama.causal_modeling import LlamaForCausalLM
 from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
@@ -244,10 +247,11 @@ class LightningModule(L.LightningModule):
         bsize = len(batch["input_ids"])
 
         # Identify the test dataset
-        test_dataset_name = self.trainer.test_dataloaders[dataloader_idx].dataset.name
+        task_name: str = self.trainer.test_dataloaders[dataloader_idx].dataset.task_name
+        test_dataset_name: str = self.trainer.test_dataloaders[dataloader_idx].dataset.name
 
         # Perform evaluation
-        if test_dataset_name == "lambada":
+        if task_name == "last_word_prediction":
             accuracy = self._handle_batch_for_last_word_prediction(batch)
             add_to_tensor_dict_safely(
                 self.test_step_outputs, "LWP_lambada_acc_sum", accuracy * bsize
@@ -255,7 +259,7 @@ class LightningModule(L.LightningModule):
             add_to_tensor_dict_safely(
                 self.test_step_outputs, "LWP_lambada_acc_cnt", bsize
             )
-        elif test_dataset_name in ["wikitext", "curation"]:
+        elif task_name == "next_token_prediction":
             loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
                 batch
             )
@@ -272,8 +276,17 @@ class LightningModule(L.LightningModule):
                 f"NTP_{test_dataset_name}_total_chars_cnt",
                 batch["total_chars_cnt"],
             )
+        elif task_name == "natural_language_understanding":
+            # Natural language inference
+            accuracy = self._handle_batch_for_natural_language_understanding(batch)
+            add_to_tensor_dict_safely(
+                self.test_step_outputs, f"NLU_{test_dataset_name}_acc_sum", accuracy * bsize
+            )
+            add_to_tensor_dict_safely(
+                self.test_step_outputs, f"NLU_{test_dataset_name}_acc_cnt", bsize
+            )
         else:
-            raise ValueError(f"Test step {self.cfg.testing.name} not implemented")
+            raise ValueError(f"Test step {task_name} not implemented")
         return None
 
     def on_test_epoch_end(self) -> None:
@@ -315,6 +328,17 @@ class LightningModule(L.LightningModule):
                     log_if_rank_zero(
                         logger,
                         f"NTP_{dataset_name} Bits per byte: {bpb} (Total characters: {gathered_step_outpus[f'NTP_{dataset_name}_total_chars_cnt']})",
+                    )
+            elif task_name == "natural_language_understanding":
+                for dataset_name in self.cfg.task[task_name].dataset_names:
+                    # Calculate the accuracy
+                    avg_accuracy = (
+                        gathered_step_outpus[f"NLU_{dataset_name}_acc_sum"]
+                        / gathered_step_outpus[f"NLU_{dataset_name}_acc_cnt"]
+                    )
+                    log_if_rank_zero(
+                        logger,
+                        f"NLU_{dataset_name} Accuracy: {avg_accuracy} (Total: {gathered_step_outpus[f'NLU_{dataset_name}_acc_cnt']})",
                     )
         return None
 
@@ -473,3 +497,30 @@ class LightningModule(L.LightningModule):
             retrieved_chunk_ids=batch["retrieved_chunk_ids"],
         )
         return loss_sum, valid_tokens_cnt
+
+    def _handle_batch_for_natural_language_understanding(
+        self,
+        batch: Dict[str, torch.Tensor],
+    ) -> float:
+        """Natural language understanding should be evaluated for each instance in the batch."""
+        bsize = len(batch["input_ids"])
+        is_correct_list: List[bool] = []
+        # last_word_prediction expects no padding
+        for b_idx in range(bsize):
+            batch_token_ids = batch["input_ids"][b_idx].unsqueeze(0)
+            target_texts: List[str] = batch["target"][b_idx : b_idx + 1]
+            text_choices: List[str] = batch["choices"]
+            retrieved_chunk_ids = (
+                None if batch["retrieved_chunk_ids"] is None else batch["retrieved_chunk_ids"][b_idx].unsqueeze(0)
+            )
+            is_correct_list.extend(
+                evaluate_text_to_text_prediction(
+                    batch_token_ids=batch_token_ids,
+                    target_texts=target_texts,
+                    text_choices=text_choices,
+                    tokenizer=self.tokenizer,
+                    model=self.uncompiled_model,
+                    retrieved_chunk_ids=retrieved_chunk_ids,
+                )
+            )
+        return sum(is_correct_list) / bsize

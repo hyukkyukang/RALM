@@ -29,8 +29,17 @@ class CurationDataset(BaseDataset):
         post_processed_data: Optional[Dataset] = None,
         retrieved_data: Optional[Dataset] = None,
         retriever: Optional[Retriever] = None,
+        mode: Optional[str] = None,
+        task_name: Optional[str] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
+        super().__init__(cfg=cfg, 
+                         global_cfg=global_cfg, 
+                         tokenizer=tokenizer, 
+                         tokenized_data=tokenized_data, 
+                         post_processed_data=post_processed_data, 
+                         retrieved_data=retrieved_data, 
+                         retriever=retriever, 
+                         mode=mode, task_name=task_name)
 
     @cached_property
     def collator(self) -> "CurationDataCollator":

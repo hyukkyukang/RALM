@@ -45,6 +45,7 @@ class DataModule(L.LightningDataModule):
             cfg=self.cfg.dataset[dataset_name],
             global_cfg=self.cfg,
             tokenizer=self.tokenizer,
+            mode="train",
         )
 
     @cached_property
@@ -53,7 +54,7 @@ class DataModule(L.LightningDataModule):
             return None
         datasets: List[BaseDataset] = []
         for task_name in self.cfg.validation.task_names:
-            datasets.extend(self._get_dataset_from_task(task_name))
+            datasets.extend(self._get_dataset_from_task(task_name, mode="validation"))
         return datasets
 
     @cached_property
@@ -62,10 +63,10 @@ class DataModule(L.LightningDataModule):
             return None
         datasets: List[BaseDataset] = []
         for task_name in self.cfg.testing.task_names:
-            datasets.extend(self._get_dataset_from_task(task_name))
+            datasets.extend(self._get_dataset_from_task(task_name, mode="test"))
         return datasets
 
-    def _get_dataset_from_task(self, task_name: str) -> List[BaseDataset]:
+    def _get_dataset_from_task(self, task_name: str, mode: str) -> List[BaseDataset]:
         datasets: List[BaseDataset] = []
         task_cfg = self.cfg.task[task_name]
         for dataset_name in task_cfg.dataset_names:
@@ -75,6 +76,8 @@ class DataModule(L.LightningDataModule):
                     cfg=self.cfg.dataset[dataset_name],
                     global_cfg=self.cfg,
                     tokenizer=self.tokenizer,
+                    mode=mode,
+                    task_name=task_name,
                 )
             )
         return datasets
@@ -85,7 +88,7 @@ class DataModule(L.LightningDataModule):
         # Load raw data
         # Check if post_process_cache_path exists
         log_if_rank_zero(logger, f"Preparing {dataset.name} dataset...")
-        if os.path.exists(dataset.post_process_cache_path):
+        if dataset.post_process_cache_path is not None and os.path.exists(dataset.post_process_cache_path):
             log_if_rank_zero(logger, "Loading cached post-processed dataset...")
             dataset.post_processed_data = dataset.load_from_disk(
                 dataset.post_process_cache_path
@@ -150,15 +153,27 @@ class DataModule(L.LightningDataModule):
         Args:
             stage: Either 'fit', 'validate', 'test', or 'predict'. Currently unused.
         """
-        if not os.path.exists(dataset.post_process_cache_path):
-            raise FileNotFoundError(
-                f"Tokenized dataset not found at {dataset.post_process_cache_path}. Run prepare_data first."
+        if dataset.post_process_cache_path is None:
+            if not os.path.exists(dataset.tokenized_cache_path):
+                raise FileNotFoundError(
+                    f"Tokenized dataset not found at {dataset.tokenized_cache_path}. Run prepare_data first."
+                )
+            # Load the tokenized data
+            dataset.tokenized_data = dataset.load_from_disk(
+                dataset.tokenized_cache_path
             )
+            # Directly use the tokenized data as the post-processed data
+            dataset.post_processed_data = dataset.tokenized_data
+        else:
+            if not os.path.exists(dataset.post_process_cache_path):
+                raise FileNotFoundError(
+                    f"Tokenized dataset not found at {dataset.post_process_cache_path}. Run prepare_data first."
+                )
 
-        # Load the cached tokenized dataset instead of the raw dataset
-        dataset.post_processed_data = dataset.load_from_disk(
-            dataset.post_process_cache_path
-        )
+            # Load the cached tokenized dataset instead of the raw dataset
+            dataset.post_processed_data = dataset.load_from_disk(
+                dataset.post_process_cache_path
+            )
         if dataset.is_use_retrieval:
             assert os.path.exists(dataset.retrieved_data_cache_path), (
                 f"Retrieved data not found at {dataset.retrieved_data_cache_path}. "

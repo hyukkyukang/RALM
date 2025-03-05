@@ -27,6 +27,8 @@ class BaseDataset:
         post_processed_data: Optional[Dataset] = None,
         retrieved_data: Optional[Dataset] = None,
         retriever: Optional[Retriever] = None,
+        mode: str = "train",
+        task_name: Optional[str] = None,
     ):
         self.cfg = cfg
         self.global_cfg = global_cfg
@@ -40,6 +42,8 @@ class BaseDataset:
         # Dataset objects that is retrieved after post-processing
         self.retrieved_data: Optional[Dataset] = retrieved_data
         self.retriever: Optional[Retriever] = retriever
+        self.mode: str = mode
+        self.task_name: Optional[str] = task_name
 
     def __len__(self):
         if self.post_processed_data is None:
@@ -72,8 +76,13 @@ class BaseDataset:
     @property
     @abc.abstractmethod
     def post_process_cache_path(self) -> str:
+        """
+        Return None if no post-processing is needed.
+        Then the post-processed data will not be saved to disk.
+        We will use tokenized data directly.
+        """
         raise NotImplementedError("Subclasses must implement this method")
-
+    
     @abc.abstractmethod
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         raise NotImplementedError("Subclasses must implement this method")
@@ -87,10 +96,12 @@ class BaseDataset:
 
     @abc.abstractmethod
     def run_post_processing(self, *args, **kwargs) -> None:
-        """Run post-processing on the tokenized data (i.e., after tokenization)
-        Return None if no post-processing is needed
+        """
+        Run post-processing on the tokenized data (i.e., after tokenization)
+        If post-processing is not needed, return None for self.post_process_cache_path.
         """
         raise NotImplementedError("Subclasses must implement this method")
+        
 
     @property
     def name(self) -> str:
@@ -160,7 +171,7 @@ class BaseDataset:
         self.raw_data = hf_load_dataset(
             path=self.cfg.huggingface_dataset_name,
             name=self.cfg.subset,
-            split=self.cfg.split,
+            split=self.cfg.split_mapping[self.mode],
             cache_dir=self.hf_cache_dir_path,
             num_proc=8,
         )
@@ -231,6 +242,12 @@ class BaseDataset:
 
     def post_process_and_save_to_disk(self, overwrite: bool = False) -> None:
         assert self.tokenized_data is not None, "Tokenized data is not loaded"
+        # Check if post-process is needed
+        if self.post_process_cache_path is None:
+            logger.info(f"No post-processing is needed for {self.name} dataset. We will use tokenized data directly.")
+            self.post_processed_data = self.tokenized_data
+            return None
+
         # Check if the post-processed data already exists
         path = self.post_process_cache_path
         if os.path.exists(path) and not overwrite:

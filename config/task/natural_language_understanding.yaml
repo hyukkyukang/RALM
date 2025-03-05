@@ -1,0 +1,12 @@
+natural_language_understanding:
+  name: natural_language_understanding
+  dataset_names:
+    - cola
+    # - sst2
+    # - mrpc
+    # - stsb
+    # - qqp
+    # - mnli
+    # - qnli
+    # - rte
+    # - wnli

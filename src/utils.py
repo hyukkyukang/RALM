@@ -1,8 +1,12 @@
 import logging
-from typing import *
 import os
+from typing import *
+
+import lightning as L
+import torch
 from omegaconf import DictConfig, open_dict
 from pytorch_lightning.utilities import rank_zero_only
+from transformers import AutoModelForCausalLM
 
 
 def is_main_process() -> bool:
@@ -131,3 +135,19 @@ def check_argument(
         if name not in dic and arg_type == bool:
             dic[name] = False
     return True
+
+def is_model_compiled(model: Union[L.LightningModule, AutoModelForCausalLM]) -> bool:
+    """Check if the model is compiled with torch.compile."""
+    if isinstance(model, L.LightningModule):
+        if (
+            "use_torch_compile" in model.cfg
+            and model.cfg.use_torch_compile
+            and torch.cuda.is_available()
+            and torch.cuda.get_device_capability()[0] >= 7
+        ):
+            assert isinstance(
+                model.model, torch._dynamo.eval_frame.OptimizedModule
+            ), f"Model is not an OptimizedModule?: {type(model.model)}"
+            return True
+    else:
+        return isinstance(model, torch._dynamo.eval_frame.OptimizedModule)

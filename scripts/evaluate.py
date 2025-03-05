@@ -28,7 +28,7 @@ def main(cfg: DictConfig) -> None:
     cfg.training.precision = 32
 
     # Load trained model
-    if cfg.model.name == "rellama":
+    if cfg.model.name in ["rellama", "llama"]:
         assert cfg.ckpt_path, "Please provide the path to the checkpoint"
         lightning_module = LightningModule.load_from_checkpoint(
             cfg.ckpt_path, map_location="cpu", training=cfg.training

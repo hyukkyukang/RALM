@@ -2,7 +2,10 @@ pints_ai:
   name: pints_ai
   huggingface_dataset_name: pints-ai/Expository-Prose-V1
   subset: null
-  split: train
+  split_mapping:
+    train: train
+    validation: null
+    test: null
   dir_name: data
   remove_columns:
     - text

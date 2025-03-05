@@ -2,7 +2,10 @@ lambada:
   name: lambada
   huggingface_dataset_name: cimec/lambada
   subset: null
-  split: test
+  split_mapping:
+    train: null
+    validation: test
+    test: test
   dir_name: data
   gpt_2_author_file_name: lambada_gpt2_author.jsonl
   use_gpt2_author_data: true

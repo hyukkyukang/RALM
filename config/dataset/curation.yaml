@@ -2,7 +2,10 @@ curation:
   name: curation
   huggingface_dataset_name: d0rj/curation-corpus
   subset: null
-  split: train # There is only train split
+  split_mapping:
+    train: null
+    validation: train
+    test: train
   dir_name: data
   remove_columns:
     - url

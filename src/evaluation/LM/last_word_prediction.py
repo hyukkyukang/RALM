@@ -8,25 +8,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.dataset.utils import SingletonBasicTokenizer
 from src.evaluation.utils import STOPWORDS_FROM_GPT2
-from src.utils import log_if_rank_zero
+from src.utils import log_if_rank_zero, is_model_compiled
 
-logger = logging.getLogger("NextWordPrediction")
-
-
-def is_model_compiled(model: Union[L.LightningModule, AutoModelForCausalLM]) -> bool:
-    if isinstance(model, L.LightningModule):
-        if (
-            "use_torch_compile" in model.cfg
-            and model.cfg.use_torch_compile
-            and torch.cuda.is_available()
-            and torch.cuda.get_device_capability()[0] >= 7
-        ):
-            assert isinstance(
-                model.model, torch._dynamo.eval_frame.OptimizedModule
-            ), f"Model is not an OptimizedModule?: {type(model.model)}"
-            return True
-    else:
-        return isinstance(model, torch._dynamo.eval_frame.OptimizedModule)
+logger = logging.getLogger("LastWordPrediction")
 
 
 @torch.no_grad()
