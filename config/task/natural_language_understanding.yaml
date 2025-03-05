@@ -2,7 +2,7 @@ natural_language_understanding:
   name: natural_language_understanding
   dataset_names:
     - cola
-    # - sst2
+    - sst2
     # - mrpc
     # - stsb
     # - qqp

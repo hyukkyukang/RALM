@@ -98,10 +98,16 @@ def extract_context_target_and_choices(
     tokenizer: AutoTokenizer,
 ) -> Tuple[List[int], List[int], List[int]]:
     """Split the token ids into context and target."""
-    num_tokens_for_target_token: int = len(tokenizer.encode(target_text, add_special_tokens=False))
+    # Find the number of tokens for the target token
+    num_tokens_for_target_token_wo_space: int = len(tokenizer.encode(target_text, add_special_tokens=False))
+    num_tokens_for_target_token_w_space: int = len(tokenizer.encode(" " + target_text, add_special_tokens=False))
+    num_tokens_for_target_token: int = min(num_tokens_for_target_token_wo_space, num_tokens_for_target_token_w_space)
+    # Find the context token ids
     context_token_ids: List[int] = token_ids[:-num_tokens_for_target_token].tolist()
+    # Find the target token ids
     target_token_ids: List[int] = token_ids[-num_tokens_for_target_token:].tolist()
     target_token_id: int = target_token_ids[0]
+    # Decode the context and target token ids
     context_text: str = tokenizer.decode(context_token_ids, skip_special_tokens=True)
     decoded_target_text: str = tokenizer.decode(target_token_ids, skip_special_tokens=True)
 

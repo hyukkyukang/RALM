@@ -4,3 +4,4 @@ from .LM.lambada import LambadaDataset, LambadaDataCollator
 from .LM.pints_ai import PintsAIDataset, PintsAIDataCollator
 from .LM.wikitext import WikiTextDataset, WikiTextDataCollator
 from .NLU.cola import CoLADataset, CoLADataCollator
+from .NLU.sst2 import SST2Dataset, SST2DataCollator

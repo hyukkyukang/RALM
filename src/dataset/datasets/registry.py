@@ -6,6 +6,7 @@ from .LM.lambada import LambadaDataset
 from .LM.pints_ai import PintsAIDataset
 from .LM.wikitext import WikiTextDataset
 from .NLU.cola import CoLADataset
+from .NLU.sst2 import SST2Dataset
 
 DATASET_REGISTRY: Dict[str, Type[BaseDataset]] = {
     "pints_ai": PintsAIDataset,
@@ -13,4 +14,5 @@ DATASET_REGISTRY: Dict[str, Type[BaseDataset]] = {
     "wikitext": WikiTextDataset,
     "curation": CurationDataset,
     "cola": CoLADataset,
+    "sst2": SST2Dataset,
 }
