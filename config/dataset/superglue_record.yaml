@@ -1,0 +1,10 @@
+superglue_record:
+  name: superglue_record
+  huggingface_dataset_name: Hyukkyu/superglue
+  subset: record
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "qas", "passage", "source"]

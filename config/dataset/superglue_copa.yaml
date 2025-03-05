@@ -1,0 +1,10 @@
+superglue_copa:
+  name: superglue_copa
+  huggingface_dataset_name: Hyukkyu/superglue
+  subset: copa
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "premise", "choice1", "choice2", "question"]

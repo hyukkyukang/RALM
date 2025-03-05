@@ -1,0 +1,10 @@
+superglue_wsc:
+  name: superglue_wsc
+  huggingface_dataset_name: Hyukkyu/superglue
+  subset: wsc
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "text", "target"]

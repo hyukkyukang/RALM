@@ -1,0 +1,10 @@
+superglue_multirc:
+  name: superglue_multirc
+  huggingface_dataset_name: Hyukkyu/superglue
+  subset: multirc
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "version", "passage"]

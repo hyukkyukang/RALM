@@ -1,0 +1,10 @@
+superglue_rte:
+  name: superglue_rte
+  huggingface_dataset_name: Hyukkyu/superglue
+  subset: rte
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "premise", "hypothesis"]

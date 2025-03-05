@@ -11,3 +11,11 @@ natural_language_understanding:
     - glue_wnli
     - glue_qqp
     # - stsb
+    - superglue_boolq
+    - superglue_cb
+    - superglue_copa
+    - superglue_multirc
+    - superglue_record
+    - superglue_rte
+    - superglue_wic
+    - superglue_wsc

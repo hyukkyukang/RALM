@@ -1,0 +1,10 @@
+superglue_cb:
+  name: superglue_cb
+  huggingface_dataset_name: Hyukkyu/superglue
+  subset: cb
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "premise", "hypothesis"]

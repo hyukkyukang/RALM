@@ -1,0 +1,10 @@
+superglue_boolq:
+  name: superglue_boolq
+  huggingface_dataset_name: Hyukkyu/superglue
+  subset: boolq
+  split_mapping:
+    train: train
+    validation: validation
+    test: validation
+  dir_name: data
+  remove_columns: ["label", "question", "passage"]
