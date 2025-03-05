@@ -1,10 +1,10 @@
-sst2:
-  name: sst2
+mrpc:
+  name: mrpc
   huggingface_dataset_name: nyu-mll/glue
-  subset: sst2
+  subset: mrpc
   split_mapping:
     train: train
     validation: validation
     test: validation
   dir_name: data
-  remove_columns: ["label", "sentence"]
+  remove_columns: ["label", "sentence1", "sentence2"]

@@ -59,10 +59,7 @@ class SST2Dataset(BaseDataset):
         The input is a sentence, and the output is a label (Positive or Negative).
         """
         # Apply the transformation to all examples
-        self.raw_data = self.raw_data.map(
-            text_to_text_transform_for_sst2,
-            remove_columns=["label", "sentence"]  # Remove original columns
-        )
+        self.raw_data = self.raw_data.map(text_to_text_transform_for_sst2)
         return None
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:

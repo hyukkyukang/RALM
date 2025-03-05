@@ -1,14 +1,8 @@
-import copy
 import logging
 from typing import *
 
-import lightning as L
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from src.dataset.utils import SingletonBasicTokenizer
-from src.evaluation.utils import STOPWORDS_FROM_GPT2
-from src.utils import log_if_rank_zero, is_model_compiled
 
 logger = logging.getLogger("TextToTextPrediction")
 
@@ -84,7 +78,7 @@ def evaluate_text_to_text_prediction(
         selected_token_ids[idx] == batch_target_token_id[idx]
         for idx in range(bsize)
     ]
-    
+
     # Check if the predicted word is the same as the last word
     if is_analyze:
         pass

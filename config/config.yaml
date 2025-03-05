@@ -18,6 +18,8 @@ defaults:
         - wikitext
         - curation
         - cola
+        - sst2
+        - mrpc
     - task:
         - last_word_prediction
         - next_token_prediction

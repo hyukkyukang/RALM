@@ -7,4 +7,4 @@ cola:
     validation: validation
     test: validation
   dir_name: data
-  remove_columns: []
+  remove_columns: ["label", "sentence"]
