@@ -1,5 +1,5 @@
-mnli_matched:
-  name: mnli_matched
+glue_mnli_matched:
+  name: glue_mnli_matched
   huggingface_dataset_name: nyu-mll/glue
   subset: mnli
   split_mapping:

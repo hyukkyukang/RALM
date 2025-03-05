@@ -1,10 +1,10 @@
-stsb:
-  name: stsb
+glue_qnli:
+  name: glue_qnli
   huggingface_dataset_name: nyu-mll/glue
-  subset: stsb
+  subset: qnli
   split_mapping:
     train: train
     validation: validation
     test: validation
   dir_name: data
-  remove_columns: ["label", "sentence1", "sentence2"]
+  remove_columns: ["label", "question", "sentence"]

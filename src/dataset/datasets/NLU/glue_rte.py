@@ -10,15 +10,15 @@ from src.dataset.datasets.base_dataset import BaseDataset
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
-logger = logging.getLogger("WNLIDataset")
+logger = logging.getLogger("GLUERTEDataset")
 
 
-def text_to_text_transform_for_wnli(example: Dict[str, Any]) -> Dict[str, Any]:
+def text_to_text_transform_for_rte(example: Dict[str, Any]) -> Dict[str, Any]:
     context = f"Does Sentence1 logically entail Sentence2? Answer with 'Yes' for entailment or 'No' if it does not.\nSentence1: {example['sentence1']}\nSentence2: {example['sentence2']}\nAnswer:"
     # Set the target label
-    if example["label"] == 1:
+    if example["label"] == 0:
         target = "Yes"
-    elif example["label"] == 0:
+    elif example["label"] == 1:
         target = "No"
     return {
         "text": f"{context} {target}",
@@ -27,7 +27,7 @@ def text_to_text_transform_for_wnli(example: Dict[str, Any]) -> Dict[str, Any]:
         "choices": ["Yes", "No"],
     }
 
-class WNLIDataset(BaseDataset):
+class GLUERTEDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
@@ -55,15 +55,15 @@ class WNLIDataset(BaseDataset):
         return None
 
     @cached_property
-    def collator(self) -> "WNLIDataCollator":
-        return WNLIDataCollator(tokenizer=self.tokenizer)
+    def collator(self) -> "RTEDataCollator":
+        return RTEDataCollator(tokenizer=self.tokenizer)
 
     def run_pre_processing(self) -> None:
         """We convert the task into text-to-text format.
-        The input is a sentence, and the output is a label (Yes or No).
+        The input is a sentence, and the output is a label (Positive or Negative).
         """
         # Apply the transformation to all examples
-        self.raw_data = self.raw_data.map(text_to_text_transform_for_wnli)
+        self.raw_data = self.raw_data.map(text_to_text_transform_for_rte)
         return None
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,7 +77,7 @@ class WNLIDataset(BaseDataset):
         return None
 
 
-class WNLIDataCollator(DataCollatorForLanguageModeling):
+class GLUERTEDataCollator(DataCollatorForLanguageModeling):
     def __init__(self, tokenizer: Union[ReLlamaTokenizer, AutoTokenizer], mlm: Optional[bool] = False) -> None:
         self.tokenizer = tokenizer
         super().__init__(tokenizer=tokenizer, mlm=mlm)

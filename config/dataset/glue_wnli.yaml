@@ -1,7 +1,7 @@
-rte:
-  name: rte
+glue_wnli:
+  name: glue_wnli
   huggingface_dataset_name: nyu-mll/glue
-  subset: rte
+  subset: wnli
   split_mapping:
     train: train
     validation: validation

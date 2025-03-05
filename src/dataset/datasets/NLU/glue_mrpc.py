@@ -10,16 +10,12 @@ from src.dataset.datasets.base_dataset import BaseDataset
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
-logger = logging.getLogger("QNLIDataset")
+logger = logging.getLogger("GLUEMRPCDataset")
 
 
-def text_to_text_transform_for_qnli(example: Dict[str, Any]) -> Dict[str, Any]:
-    context = f"Does the given sentence logically entail the question? Answer with 'Yes' for entailment or 'No' if it does not.\nQuestion: {example['question']}\nSentence: {example['sentence']}\nAnswer:"
-    # Set the target label
-    if example["label"] == 0:
-        target = "Yes"
-    elif example["label"] == 1:
-        target = "No"
+def text_to_text_transform_for_mrpc(example: Dict[str, Any]) -> Dict[str, Any]:
+    context = f"Are the following two sentences semantically equivalent?\nSentence1: {example['sentence1']}\nSentence2: {example['sentence2']}\nAnswer:"
+    target = "Yes" if example["label"] == 1 else "No"
     return {
         "text": f"{context} {target}",
         "context": context,
@@ -27,7 +23,7 @@ def text_to_text_transform_for_qnli(example: Dict[str, Any]) -> Dict[str, Any]:
         "choices": ["Yes", "No"],
     }
 
-class QNLIDataset(BaseDataset):
+class GLUEMRPCDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
@@ -55,15 +51,15 @@ class QNLIDataset(BaseDataset):
         return None
 
     @cached_property
-    def collator(self) -> "QNLIDataCollator":
-        return QNLIDataCollator(tokenizer=self.tokenizer)
+    def collator(self) -> "MRPCDatasetDataCollator":
+        return MRPCDatasetDataCollator(tokenizer=self.tokenizer)
 
     def run_pre_processing(self) -> None:
         """We convert the task into text-to-text format.
-        The input is a sentence, and the output is a label (Yes or No).
+        The input is a sentence, and the output is a label (Positive or Negative).
         """
         # Apply the transformation to all examples
-        self.raw_data = self.raw_data.map(text_to_text_transform_for_qnli)
+        self.raw_data = self.raw_data.map(text_to_text_transform_for_mrpc)
         return None
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,7 +73,7 @@ class QNLIDataset(BaseDataset):
         return None
 
 
-class QNLIDataCollator(DataCollatorForLanguageModeling):
+class GLUEMRPCDatasetDataCollator(DataCollatorForLanguageModeling):
     def __init__(self, tokenizer: Union[ReLlamaTokenizer, AutoTokenizer], mlm: Optional[bool] = False) -> None:
         self.tokenizer = tokenizer
         super().__init__(tokenizer=tokenizer, mlm=mlm)

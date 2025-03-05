@@ -1,13 +1,13 @@
 natural_language_understanding:
   name: natural_language_understanding
   dataset_names:
-    - cola
-    - sst2
-    - mrpc
-    - mnli_matched
-    - mnli_mismatched
-    - qnli
-    - rte
-    - wnli
-    - qqp
+    - glue_cola
+    - glue_sst2
+    - glue_mrpc
+    - glue_mnli_matched
+    - glue_mnli_mismatched
+    - glue_qnli
+    - glue_rte
+    - glue_wnli
+    - glue_qqp
     # - stsb

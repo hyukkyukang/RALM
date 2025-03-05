@@ -10,12 +10,16 @@ from src.dataset.datasets.base_dataset import BaseDataset
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
-logger = logging.getLogger("MRPCDataset")
+logger = logging.getLogger("GLUEQQPDataset")
 
 
-def text_to_text_transform_for_mrpc(example: Dict[str, Any]) -> Dict[str, Any]:
-    context = f"Are the following two sentences semantically equivalent?\nSentence1: {example['sentence1']}\nSentence2: {example['sentence2']}\nAnswer:"
-    target = "Yes" if example["label"] == 1 else "No"
+def text_to_text_transform_for_qqp(example: Dict[str, Any]) -> Dict[str, Any]:
+    context = f"Are the following two questions semantically equivalent?\nQuestion1: {example['question1']}\nQuestion2: {example['question2']}\nAnswer:"
+    # Set the target label
+    if example["label"] == 0:
+        target = "No"
+    elif example["label"] == 1:
+        target = "Yes"
     return {
         "text": f"{context} {target}",
         "context": context,
@@ -23,7 +27,7 @@ def text_to_text_transform_for_mrpc(example: Dict[str, Any]) -> Dict[str, Any]:
         "choices": ["Yes", "No"],
     }
 
-class MRPCDataset(BaseDataset):
+class GLUEQQPDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
@@ -51,15 +55,15 @@ class MRPCDataset(BaseDataset):
         return None
 
     @cached_property
-    def collator(self) -> "MRPCDatasetDataCollator":
-        return MRPCDatasetDataCollator(tokenizer=self.tokenizer)
+    def collator(self) -> "QQPDataCollator":
+        return QQPDataCollator(tokenizer=self.tokenizer)
 
     def run_pre_processing(self) -> None:
         """We convert the task into text-to-text format.
         The input is a sentence, and the output is a label (Positive or Negative).
         """
         # Apply the transformation to all examples
-        self.raw_data = self.raw_data.map(text_to_text_transform_for_mrpc)
+        self.raw_data = self.raw_data.map(text_to_text_transform_for_qqp)
         return None
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
@@ -73,7 +77,7 @@ class MRPCDataset(BaseDataset):
         return None
 
 
-class MRPCDatasetDataCollator(DataCollatorForLanguageModeling):
+class GLUEQQPDataCollator(DataCollatorForLanguageModeling):
     def __init__(self, tokenizer: Union[ReLlamaTokenizer, AutoTokenizer], mlm: Optional[bool] = False) -> None:
         self.tokenizer = tokenizer
         super().__init__(tokenizer=tokenizer, mlm=mlm)

@@ -10,24 +10,21 @@ from src.dataset.datasets.base_dataset import BaseDataset
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
-logger = logging.getLogger("QQPDataset")
+logger = logging.getLogger("GLUESTSBDataset")
 
 
-def text_to_text_transform_for_qqp(example: Dict[str, Any]) -> Dict[str, Any]:
-    context = f"Are the following two questions semantically equivalent?\nQuestion1: {example['question1']}\nQuestion2: {example['question2']}\nAnswer:"
-    # Set the target label
-    if example["label"] == 0:
-        target = "No"
-    elif example["label"] == 1:
-        target = "Yes"
+def text_to_text_transform_for_stsb(example: Dict[str, Any]) -> Dict[str, Any]:
+    raise NotImplementedError("STSB is not implemented yet.")
+    context = f"Determine the similarity between the following two sentences: {example['sentence1']} and {example['sentence2']}\nAnswer:"
+    target = "Positive" if example["label"] == 1 else "Negative"
     return {
         "text": f"{context} {target}",
         "context": context,
         "target": target,
-        "choices": ["Yes", "No"],
+        "choices": ["Positive", "Negative"],
     }
 
-class QQPDataset(BaseDataset):
+class GLUESTSBDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
@@ -55,15 +52,15 @@ class QQPDataset(BaseDataset):
         return None
 
     @cached_property
-    def collator(self) -> "QQPDataCollator":
-        return QQPDataCollator(tokenizer=self.tokenizer)
+    def collator(self) -> "STSBDataCollator":
+        return STSBDataCollator(tokenizer=self.tokenizer)
 
     def run_pre_processing(self) -> None:
         """We convert the task into text-to-text format.
         The input is a sentence, and the output is a label (Positive or Negative).
         """
         # Apply the transformation to all examples
-        self.raw_data = self.raw_data.map(text_to_text_transform_for_qqp)
+        self.raw_data = self.raw_data.map(text_to_text_transform_for_stsb)
         return None
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,7 +74,7 @@ class QQPDataset(BaseDataset):
         return None
 
 
-class QQPDataCollator(DataCollatorForLanguageModeling):
+class GLUESTSBDataCollator(DataCollatorForLanguageModeling):
     def __init__(self, tokenizer: Union[ReLlamaTokenizer, AutoTokenizer], mlm: Optional[bool] = False) -> None:
         self.tokenizer = tokenizer
         super().__init__(tokenizer=tokenizer, mlm=mlm)

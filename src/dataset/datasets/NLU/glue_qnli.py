@@ -10,20 +10,24 @@ from src.dataset.datasets.base_dataset import BaseDataset
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
-logger = logging.getLogger("CoLADataset")
+logger = logging.getLogger("GLUEQNLIDataset")
 
 
-def text_to_text_transform_for_cola(example: Dict[str, Any]) -> Dict[str, Any]:
-    context = f"Judge whether the following sentence is grammatically correct or incorrect: {example['sentence']}\nAnswer:"
-    target = "Correct" if example["label"] == 1 else "Incorrect"
+def text_to_text_transform_for_qnli(example: Dict[str, Any]) -> Dict[str, Any]:
+    context = f"Does the given sentence logically entail the question? Answer with 'Yes' for entailment or 'No' if it does not.\nQuestion: {example['question']}\nSentence: {example['sentence']}\nAnswer:"
+    # Set the target label
+    if example["label"] == 0:
+        target = "Yes"
+    elif example["label"] == 1:
+        target = "No"
     return {
         "text": f"{context} {target}",
         "context": context,
         "target": target,
-        "choices": ["Correct", "Incorrect"],
+        "choices": ["Yes", "No"],
     }
 
-class CoLADataset(BaseDataset):
+class GLUEQNLIDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
@@ -51,26 +55,29 @@ class CoLADataset(BaseDataset):
         return None
 
     @cached_property
-    def collator(self) -> "CoLADataCollator":
-        return CoLADataCollator(tokenizer=self.tokenizer)
+    def collator(self) -> "QNLIDataCollator":
+        return QNLIDataCollator(tokenizer=self.tokenizer)
 
     def run_pre_processing(self) -> None:
         """We convert the task into text-to-text format.
-        The input is a sentence, and the output is a label (Correct or Incorrect).
+        The input is a sentence, and the output is a label (Yes or No).
         """
         # Apply the transformation to all examples
-        self.raw_data = self.raw_data.map(text_to_text_transform_for_cola)
+        self.raw_data = self.raw_data.map(text_to_text_transform_for_qnli)
         return None
 
     def _tokenization_fn(self, examples: Dict[str, Any]) -> Dict[str, Any]:
-        return self.tokenizer(examples["text"], truncation=False)
+        # Encode and decode and encode again to make tokenization consistent.
+        tokenized_texts: List[List[int]] = self.tokenizer(examples["text"], truncation=False)["input_ids"]
+        texts: List[str] = self.tokenizer.batch_decode(tokenized_texts, skip_special_tokens=True)
+        return self.tokenizer(texts, truncation=False)
 
     def run_post_processing(self) -> None:
         self.post_processed_data = self.tokenized_data
         return None
 
 
-class CoLADataCollator(DataCollatorForLanguageModeling):
+class GLUEQNLIDataCollator(DataCollatorForLanguageModeling):
     def __init__(self, tokenizer: Union[ReLlamaTokenizer, AutoTokenizer], mlm: Optional[bool] = False) -> None:
         self.tokenizer = tokenizer
         super().__init__(tokenizer=tokenizer, mlm=mlm)

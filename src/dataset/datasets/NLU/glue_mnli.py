@@ -10,7 +10,7 @@ from src.dataset.datasets.base_dataset import BaseDataset
 from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
-logger = logging.getLogger("MNLIDataset")
+logger = logging.getLogger("GLUEMNLIDataset")
 
 
 def text_to_text_transform_for_mnli(example: Dict[str, Any]) -> Dict[str, Any]:
@@ -29,7 +29,7 @@ def text_to_text_transform_for_mnli(example: Dict[str, Any]) -> Dict[str, Any]:
         "choices": ["Entailment", "Neutral", "Contradiction"],
     }
 
-class MNLIDataset(BaseDataset):
+class GLUEMNLIDataset(BaseDataset):
     def __init__(
         self,
         cfg: DictConfig,
@@ -79,7 +79,7 @@ class MNLIDataset(BaseDataset):
         return None
 
 
-class MNLIDataCollator(DataCollatorForLanguageModeling):
+class GLUEMNLIDataCollator(DataCollatorForLanguageModeling):
     def __init__(self, tokenizer: Union[ReLlamaTokenizer, AutoTokenizer], mlm: Optional[bool] = False) -> None:
         self.tokenizer = tokenizer
         super().__init__(tokenizer=tokenizer, mlm=mlm)

@@ -1,10 +1,10 @@
-cola:
-  name: cola
+glue_qqp:
+  name: glue_qqp
   huggingface_dataset_name: nyu-mll/glue
-  subset: cola
+  subset: qqp
   split_mapping:
     train: train
     validation: validation
     test: validation
   dir_name: data
-  remove_columns: ["label", "sentence"]
+  remove_columns: ["label", "question1", "question2"]

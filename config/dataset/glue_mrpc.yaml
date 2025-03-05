@@ -1,10 +1,10 @@
-qqp:
-  name: qqp
+glue_mrpc:
+  name: glue_mrpc
   huggingface_dataset_name: nyu-mll/glue
-  subset: qqp
+  subset: mrpc
   split_mapping:
     train: train
     validation: validation
     test: validation
   dir_name: data
-  remove_columns: ["label", "question1", "question2"]
+  remove_columns: ["label", "sentence1", "sentence2"]

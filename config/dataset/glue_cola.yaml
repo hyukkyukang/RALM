@@ -1,7 +1,7 @@
-sst2:
-  name: sst2
+glue_cola:
+  name: glue_cola
   huggingface_dataset_name: nyu-mll/glue
-  subset: sst2
+  subset: glue_cola
   split_mapping:
     train: train
     validation: validation
