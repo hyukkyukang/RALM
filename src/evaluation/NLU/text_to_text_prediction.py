@@ -19,6 +19,10 @@ def predict_next_tokens_from_choices(
     selected_token_ids: List[int] = []
     batch_context_token_ids = torch.tensor(batch_context_token_ids, device=model.device)
     for bidx, token_ids in enumerate(batch_context_token_ids):
+        # Truncate the token ids to the max length
+        if token_ids.shape[0] > model.config.max_position_embeddings:
+            logger.warning(f"Truncating the token ids to the max length: {token_ids.shape[0]} -> {model.config.max_position_embeddings}")
+            token_ids = token_ids[:model.config.max_position_embeddings]
         outputs = model(
             token_ids.unsqueeze(0),
             retrieved_chunk_ids=retrieved_chunk_ids
