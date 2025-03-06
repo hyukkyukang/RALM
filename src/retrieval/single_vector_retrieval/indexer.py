@@ -1,6 +1,7 @@
 import concurrent.futures
 import logging
 import math
+import os
 import random
 import warnings
 from pathlib import Path
@@ -34,7 +35,7 @@ def load_embedding_file(path: str) -> np.ndarray:
     return arr
 
 
-class Indexer:
+class SentenceTransformerIndexer:
     """
     Class to build and save a Faiss IVF-PQ index from a collection of embedding files.
     """
@@ -92,6 +93,8 @@ class Indexer:
           3. Train and add all embeddings to the index on GPU in passage index order.
           4. Transfer the index back to CPU (optional) and save it.
         """
+        os.makedirs(os.path.dirname(self.cfg.index_path), exist_ok=True)
+
         # Step 1: Create the quantizer (L2 distance)
         quantizer: faiss.IndexFlatL2 = faiss.IndexFlatL2(self.cfg.dim)
 
@@ -165,7 +168,7 @@ class Indexer:
         logger.info(f"Saving index to {self.cfg.index_path}")
         faiss.write_index(index_cpu, self.cfg.index_path)
         logger.info("Indexing complete.")
-        
+
         # Check that the total number of embeddings in the index is correct.
         index_cpu: faiss.IndexIVFPQ = faiss.read_index(self.cfg.index_path)
         if index_cpu.ntotal != total_num_of_embeddings:

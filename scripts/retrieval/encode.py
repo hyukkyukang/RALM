@@ -14,7 +14,7 @@ import torch.multiprocessing as mp
 from omegaconf import DictConfig
 
 from src.dataset import DataModule
-from src.retrieval.single_vector_retrieval.encoder import Encoder
+from src.retrieval import SentenceTransformerEncoder
 from src.utils import get_ip
 
 logger = logging.getLogger("Encoding")
@@ -66,7 +66,7 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
         os.makedirs(save_dir)
 
     # Instantiate the encoder and move the model to the designated GPU.
-    encoder = Encoder(
+    encoder = SentenceTransformerEncoder(
         model_name=cfg.retrieval.encoding.model_name,
         src_tokenizer_name=cfg.model.base_name,
         save_dir_path=save_dir,

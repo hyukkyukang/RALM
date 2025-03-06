@@ -1,20 +1,21 @@
 import logging
+from typing import *
 
 import hkkang_utils.misc as misc_utils
 import hydra
 from omegaconf import DictConfig
 
-from src.retrieval import SentenceTransformerIndexer
+from src.retrieval import SentenceTransformerRetriever
 
 logger = logging.getLogger("Indexing")
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    indexer = SentenceTransformerIndexer(cfg=cfg.retrieval.indexing, global_cfg=cfg)
-    indexer()
-    logger.info("Indexing complete.")
+    retriever = SentenceTransformerRetriever(cfg=cfg.retrieval, global_cfg=cfg)
+    results: List[Union[str, int]] = retriever.search_batch(queries=["What is the capital of France?", "What is the capital of Germany?"], k=5, return_as_text=True)
+    print(results)
+    print("Done!")
 
-# Example Usage:
 if __name__ == "__main__":
     logging.basicConfig(
         format="[%(asctime)s %(levelname)s %(name)s] %(message)s",
