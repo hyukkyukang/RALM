@@ -20,8 +20,6 @@ from src.utils import slack_disable_callback
 
 logger = logging.getLogger("Retrieval")
 
-
-
 def get_global_worker_idx(worker_start_idx_of_current_server: int, current_worker_local_idx: int) -> int:
     # Get the start and end indices for the current worker
     worker_global_idx = worker_start_idx_of_current_server + current_worker_local_idx

@@ -103,19 +103,44 @@ class SentenceTransformerRetriever:
                 logger.info("Torch compile is not enabled.")
         return self._model
 
-    def search(self, query: str, k: int, return_as_text: bool = False) -> List[Union[int, str]]:
+    def search(self, query: str, k: int, return_as_text: bool = False, passage_id_to_ignore: int = None) -> List[Union[int, str]]:
         """
         Search for the top-k nearest neighbors of a given query string.
         """
-        return self.search_batch([query], k, return_as_text)[0]
+        return self.search_batch([query], k, return_as_text, passage_to_ignore_list=[passage_id_to_ignore])[0]
 
-    def search_batch(self, queries: List[str], k: int, return_as_text: bool = False) -> List[List[Union[int, str]]]:
+    def search_batch(self, queries: List[str], k: int, return_as_text: bool = False, passage_to_ignore_list: List[int] = None) -> List[List[Union[int, str]]]:
         """
         Search for the top-k nearest neighbors for a batch of queries.
         """
+        
+        # Encode the queries
         query_embeddings = self.encode_queries(queries)
+        
+        # Increase the number of k if there are passages to ignore
+        original_k: int = k
+        if passage_to_ignore_list is not None:
+            k = k + self.num_chunks_per_passage
+        
+        # Search for the top-k nearest neighbors
         _, indices = self.index.search(query_embeddings, k)
-        indices = [lst.tolist() for lst in indices]
+        indices: List[List[int]] = [lst.tolist() for lst in indices]
+
+        # Remove the passages to ignore
+        if passage_to_ignore_list is not None:
+            for b_idx, lst in enumerate(indices):
+                filtered_lst: List[int] = []
+                for idx, item in enumerate(lst):
+                    # Convert the global chunk ID to the passage ID
+                    passage_id: int = self.convert_global_chunk_id_to_passage_id(item)
+                    if passage_id != passage_to_ignore_list[b_idx]:
+                        filtered_lst.append(item)
+                indices[b_idx] = filtered_lst
+
+        # Get the top-k nearest neighbors
+        indices = [lst[:original_k] for lst in indices]
+
+        # Convert the indices to text if requested
         if return_as_text:
             return [[self.convert_global_chunk_id_to_text(idx) for idx in lst] for lst in indices]
         return indices
@@ -153,8 +178,8 @@ class SentenceTransformerRetriever:
         """
         Convert a global chunk ID to the corresponding passage ID and local chunk ID.
         """
-        passage_id = global_chunk_id // self.num_chunks_per_passage
-        local_chunk_id = global_chunk_id % self.num_chunks_per_passage
+        passage_id = self.convert_global_chunk_id_to_passage_id(global_chunk_id)
+        local_chunk_id = self.convert_global_chunk_id_to_local_chunk_id(global_chunk_id)
         return passage_id, local_chunk_id
 
     def convert_global_chunk_id_to_passage_id(self, global_chunk_id: int) -> int:
