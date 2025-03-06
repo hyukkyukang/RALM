@@ -135,7 +135,7 @@ class SentenceTransformerRetriever:
         tokens = {k: v.to(device) for k, v in tokens.items()}
         with torch.inference_mode():
             outputs = self.model(**tokens)
-            cls_embeddings = outputs.last_hidden_state[:, 0].cpu().numpy() if torch.cuda.is_availabe() else outputs.last_hidden_state[:, 0].numpy()
+            cls_embeddings = outputs.last_hidden_state[:, 0].cpu().numpy() if torch.cuda.is_available() else outputs.last_hidden_state[:, 0].numpy()
         return cls_embeddings
 
     def convert_global_chunk_id_to_text(self, global_chunk_id: int) -> str:
