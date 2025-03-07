@@ -1,5 +1,10 @@
-from .retriever import SentenceTransformerRetriever
-from .encoder import SentenceTransformerEncoder
-from .indexer import SentenceTransformerIndexer
+from .retriever import SentenceTransformerRetriever, SentenceTransformerCorpusRetriever
+from .encoder import SentenceTransformerCorpusEncoder
+from .indexer import SentenceTransformerCorpusIndexer
 
-__all__ = ["SentenceTransformerRetriever", "SentenceTransformerEncoder", "SentenceTransformerIndexer"]
+__all__ = [
+    "SentenceTransformerRetriever",
+    "SentenceTransformerCorpusRetriever",
+    "SentenceTransformerCorpusEncoder",
+    "SentenceTransformerCorpusIndexer",
+]

@@ -16,8 +16,11 @@ import lightning as L
 import psutil
 import torch
 import tqdm
-from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
-                                         ModelSummary)
+from lightning.pytorch.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+    ModelSummary,
+)
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
@@ -27,7 +30,13 @@ from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
 from src.model.utils import repair_checkpoint
 from src.training.checkpoint import TimeBasedCheckpoint
-from src.utils import add_config, is_main_process, log_if_rank_zero, slack_disable_callback, is_torch_compile_possible
+from src.utils import (
+    add_config,
+    is_main_process,
+    is_torch_compile_possible,
+    log_if_rank_zero,
+    slack_disable_callback,
+)
 
 logger = logging.getLogger("PL_Trainer")
 
@@ -151,7 +160,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
             checkpoint_callback,
             time_based_checkpoint_callback,
         ],
-        # We are handling distributed sampler in the DataModule to use a custom training sampler 
+        # We are handling distributed sampler in the DataModule to use a custom training sampler
         # that supports checkpointing and resumption of training for DDP
         use_distributed_sampler=False,
     )
@@ -171,11 +180,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
 
     # Rename the modules in the checkpoint when using torch compile
     # For the main process with rank 0 only
-    if (
-        is_main_process()
-        and cfg.use_torch_compile
-        and is_torch_compile_possible()
-    ):
+    if is_main_process() and cfg.use_torch_compile and is_torch_compile_possible():
         # Find all files ending with .ckpt in the default_root_dir
         ckpt_file_paths: List[str] = glob.glob(os.path.join(default_root_dir, "*.ckpt"))
         log_if_rank_zero(
@@ -222,8 +227,8 @@ def main(cfg: DictConfig) -> None:
 
     # Set the messages to send to the slack channel
     start_msg = f"Pretraining started!" if cfg.notify_start else None
-    success_msg = f"<@{slack_user_id}> Succeeded pretraining language model!"
-    error_msg = f"<@{slack_user_id}> Failed pretraining language model"
+    success_msg = f"Succeeded pretraining language model!"
+    error_msg = f"Failed pretraining language model"
     # Create slack notification replies
     pretty_cfg: str = OmegaConf.to_yaml(cfg)
     full_command = " ".join(psutil.Process(os.getpid()).cmdline())
@@ -237,6 +242,7 @@ def main(cfg: DictConfig) -> None:
         start_msg=start_msg,
         success_msg=success_msg,
         error_msg=error_msg,
+        user_id_to_mention=slack_user_id,
         replies=slack_notification_replies,
         disable_callback=slack_disable_callback,
         disable=not cfg.is_debug and not cfg.notify_end,

@@ -1,7 +1,7 @@
 # Retrieval configs
-use_gpu: False
+use_gpu: True
 return_as_str: False
-topk: 3
+topk: 10
 
 # For connection to the retrieval server
 address: "http://localhost"
@@ -9,6 +9,7 @@ port: 7000
 
 # For saving the encoded vector embeddings
 embedding_dir_path: "data/retrieval/embeddings"
+retrieved_chunk_ids_dir_path: "data/retrieval/chunk_ids"
 
 # For encoding
 encoding:
@@ -29,3 +30,11 @@ indexing:
   train_size: 10_000_000
   batch_size: 5_000
   dim: 1024
+
+# For retrieving
+retrieving:
+  num_total_workers: 39
+  worker_start_idx_of_current_server: 0
+  num_workers_in_current_server: 2
+  num_dataloader_workers: 8
+  batch_size: 100

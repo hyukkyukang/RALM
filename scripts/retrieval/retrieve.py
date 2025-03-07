@@ -1,125 +1,102 @@
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
-
 import logging
 import os
-import pickle
 from typing import *
 
-import hkkang_utils.concurrent as concurrent_utils
 import hkkang_utils.misc as misc_utils
 import hkkang_utils.slack as slack_utils
 import hydra
-from datasets import Dataset
+import torch
+import torch.multiprocessing as mp
 from omegaconf import DictConfig
 
 from src.dataset import DataModule
-from retrieval.multi_vector_retrieval.xtr_warp import Retriever
-from src.utils import slack_disable_callback
+from src.retrieval import SentenceTransformerCorpusRetriever
+from src.utils import get_ip, get_partition_indices, slack_disable_callback
 
 logger = logging.getLogger("Retrieval")
 
-def get_global_worker_idx(worker_start_idx_of_current_server: int, current_worker_local_idx: int) -> int:
-    # Get the start and end indices for the current worker
-    worker_global_idx = worker_start_idx_of_current_server + current_worker_local_idx
-    return worker_global_idx
-
-def get_dataset_range_for_current_worker(total_num_items: int, total_num_workers: int, worker_start_idx_of_current_server: int, current_worker_local_idx: int) -> Tuple[int, int]:
-    # Split the dataset into num_workers_in_current_server parts
-    items_per_process = total_num_items // total_num_workers
-    # Get the start and end indices for the current worker
-    worker_global_idx = get_global_worker_idx(worker_start_idx_of_current_server, current_worker_local_idx)
-    # Get the dataset range for the current worker
-    start_idx = worker_global_idx * items_per_process
-    end_idx = start_idx + items_per_process
-    
-    return start_idx, end_idx
-
-def single_retrieval(process_idx: int, data_module: DataModule, global_cfg: DictConfig) -> str:
-    # Initialize the retriever
-    retriever = Retriever(address=global_cfg.retrieval.address, port=global_cfg.retrieval.port)
-    # Get the global process idx
-    global_process_idx = get_global_worker_idx(worker_start_idx_of_current_server=global_cfg.retrieval.worker_start_idx_of_current_server, current_worker_local_idx=process_idx)
-    # Get the dataset range for the current worker
-    start_idx, end_idx = get_dataset_range_for_current_worker(total_num_items=len(data_module), total_num_workers=global_cfg.retrieval.total_num_workers, worker_start_idx_of_current_server=global_cfg.retrieval.worker_start_idx_of_current_server, current_worker_local_idx=process_idx)
-
-    # Get the retrieved data
-    retrieved_indices_list: List[List[int]] = []
-    for idx in range(start_idx, end_idx):
-        # Get the item
-        item = data_module[idx]
-        # Get the retrieved data
-        decoded_text: List[str] = data_module.tokenizer.decode(item["input_ids"], skip_special_tokens=True)
-        retrieved_data_indices: List[int] = retriever(decoded_text)
-        # Save the retrieved data
-        retrieved_indices_list.append(retrieved_data_indices)
-    # Save the retrieved indices
-    saved_path = os.path.join(data_module.retrieved_data_cache_path, f"retrieved_indices_{global_process_idx}.parquet")
-    # Save the retrieved indices
-    with open(saved_path, "wb") as f:
-        pickle.dump(retrieved_indices_list, f)
-    return saved_path
+# Changing the precision of the matmul operation to high causes error when torch compile the flex attention
+torch._dynamo.config.cache_size_limit = 1000
+torch.set_float32_matmul_precision("high")
 
 
-def parallel_retrieval(data_module: DataModule, num_workers: int = 64, global_cfg: DictConfig = None) -> None:
-    # Get total number of items
-    total_items = len(data_module)
-    # Get number of items per process
-    items_per_process = total_items // num_workers
-    # Initialize multiprocessor
-    multiprocessor = concurrent_utils.MultiProcessor(num_workers=num_workers)
-    # Run count_tokens for each process
-    for i in range(num_workers):
-        multiprocessor.run(
-            single_retrieval,
-            process_idx=i,
-            data_module=data_module,
-            indices=range(i * items_per_process, (i + 1) * items_per_process),
-            global_cfg=global_cfg,
-        )
-    # Join all processes
-    multiprocessor.join()
+def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
+    logging.basicConfig(
+        format="[%(asctime)s %(levelname)s %(name)s] %(message)s",
+        datefmt="%m/%d %H:%M:%S",
+        level=logging.INFO,
+    )
+    # Get the global total number of workers.
+    total_num_workers = cfg.retrieval.retrieving.num_total_workers
+    worker_start_idx_of_current_server = (
+        cfg.retrieval.retrieving.worker_start_idx_of_current_server
+    )
+    num_workers_in_current_server = (
+        cfg.retrieval.retrieving.num_workers_in_current_server
+    )
 
-    # Retrieve the results
-    saved_paths: List[str] = multiprocessor.results
+    assert (
+        num_workers_in_current_server == world_size
+    ), f"The number of workers in the current server ({num_workers_in_current_server}) must be equal to the number of GPUs ({world_size})."
 
-    # Combine the results
-    retrieved_indices_list: List[List[int]] = []
-    for saved_path in saved_paths:
-        # Load the dataset
-        dataset = data_module.load_from_disk(saved_path)
-        retrieved_indices_list.extend(dataset)
+    # Set the device for this process
+    device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
+    torch.cuda.set_device(device)
 
-    # Save the retrieved indices
-    retrieval_dataset: Dataset = Dataset.from_list(retrieved_indices_list)
-    retrieval_dataset.save_to_disk(data_module.retrieved_data_cache_path)
+    # Create a sub-directory for this GPU process to avoid file name collisions.
+    server_ip: str = get_ip().replace(".", "_")
+    save_dir: str = os.path.join(
+        cfg.retrieval.retrieved_chunk_ids_dir_path, server_ip, f"gpu_{rank}"
+    )
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
-    # Remove the temporary datasets
-    for saved_path in saved_paths:
-        os.remove(saved_path)
+    # Instantiate the retriever and move the model to the designated GPU.
+    retriever = SentenceTransformerCorpusRetriever(
+        cfg.retrieval, cfg, save_dir_path=save_dir, device=device
+    )
 
-    return None
+    # Load the dataset from disk.
+    data_module = DataModule(cfg=cfg)
+    data_module.setup()
+    dataset = data_module.train_dataset
+    total_len = len(dataset)
+
+    # Partition the dataset indices.
+    print("total_len: ", total_len)
+    start_idx, end_idx = get_partition_indices(
+        rank, total_len, worker_start_idx_of_current_server, total_num_workers
+    )
+
+    logger.info(
+        f"GPU {rank}: processing indices [{start_idx}:{end_idx}] of {total_len}"
+    )
+    retriever.retrieve_dataset(
+        dataset,
+        batch_size=cfg.retrieval.retrieving.batch_size,
+        data_span_start_idx=start_idx,
+        data_span_end_idx=end_idx,
+        num_dataloader_workers=cfg.retrieval.retrieving.num_dataloader_workers,
+    )
 
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    # Initialize lightning module and call prepare_data to figure out the length of the dataset
-    data_module = DataModule(cfg=cfg)
-    data_module.prepare_data()
+    # Determine the number of GPUs available.
+    world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    logger.info(f"Starting retrieval with {world_size} GPU(s).")
 
-    # Conduct retrieval for training data
-    logger.info(f"Conducting retrieval for training data {data_module.train_dataset.name}...")
-    parallel_retrieval(data_module.train_dataset)
+    if world_size > 1:
+        # Spawn a process per GPU.
+        mp.spawn(
+            process_partition, args=(world_size, cfg), nprocs=world_size, join=True
+        )
+    else:
+        process_partition(0, world_size, cfg)
 
-    # Conduct retrieval for validation data
-    for dataset in data_module.val_datasets:
-        logger.info(f"Conducting retrieval for validation data {dataset.name}...")
-        parallel_retrieval(dataset, global_cfg=cfg)
-
-    logger.info(f"Retrieval complete. Total dataset size: {len(data_module)}")
-
-    return None
 
 if __name__ == "__main__":
     logging.basicConfig(
@@ -130,11 +107,14 @@ if __name__ == "__main__":
     misc_utils.load_dotenv()
     channel = os.getenv("SLACK_CHANNEL_NAME")
     slack_user_id = os.getenv("SLACK_USER_ID")
-    assert channel is not None and slack_user_id is not None, "Set the SLACK_CHANNEL_NAME and SLACK_USER_ID in the .env file"
+    assert (
+        channel is not None and slack_user_id is not None
+    ), "Set the SLACK_CHANNEL_NAME and SLACK_USER_ID in the .env file"
     with slack_utils.notification(
         channel=channel,
-        success_msg=f"<@{slack_user_id}> Retrieval complete.",
-        error_msg=f"<@{slack_user_id}> Retrieval failed.",
+        success_msg=f"Retrieval complete.",
+        error_msg=f"Retrieval failed.",
+        user_id_to_mention=slack_user_id,
         replies=[],
         disable=False,
         disable_callback=slack_disable_callback,

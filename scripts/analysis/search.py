@@ -12,20 +12,26 @@ from src.tokenization import TOKENIZER_REGISTRY
 logger = logging.getLogger("Search")
 
 
-
 def search_with_user_query(retriever: SentenceTransformerRetriever) -> None:
     queries = ["What is the capital of France?", "What is the capital of Germany?"]
     k = 5
-    results: List[Union[str, int]] = retriever.search_batch(queries=queries, k=k, return_as_text=True)
+    results: List[Union[str, int]] = retriever.search_batch(
+        queries=queries, k=k, return_as_text=True
+    )
     logging.info(f"Results with user query: {results}")
     return None
 
 
-def search_with_chunks_from_dataset(retriever: SentenceTransformerRetriever, global_cfg: DictConfig) -> None:
+def search_with_chunks_from_dataset(
+    retriever: SentenceTransformerRetriever,
+    global_cfg: DictConfig,
+    k: int = 5,
+    test_num: int = 10,
+) -> None:
     # Load the collection
-    tokenizer = TOKENIZER_REGISTRY[
-        global_cfg.model.name
-    ].from_pretrained(global_cfg.model.base_name)
+    tokenizer = TOKENIZER_REGISTRY[global_cfg.model.name].from_pretrained(
+        global_cfg.model.base_name
+    )
     dataset = PintsAIDataset(
         global_cfg.dataset.pints_ai,
         global_cfg,
@@ -34,21 +40,20 @@ def search_with_chunks_from_dataset(retriever: SentenceTransformerRetriever, glo
     dataset.post_processed_data = dataset.load_from_disk(
         dataset.post_process_cache_path
     )
-    def get_chunk_from_dataset() :
+
+    def get_chunk_from_dataset():
         for idx, item in enumerate(dataset):
             token_ids = item["input_ids"]
             assert len(token_ids) % retriever.chunk_size == 0
             chunk_id = 0
             for idx in range(0, len(token_ids), retriever.chunk_size):
-                chunk = token_ids[idx:idx+retriever.chunk_size]
+                chunk = token_ids[idx : idx + retriever.chunk_size]
                 yield chunk, chunk_id
                 chunk_id += 1
 
     # Get the first chunk
-    TEST_NUM = 10
-    k = 5
     iter_get_chunk_from_dataset = get_chunk_from_dataset()
-    for _ in range(TEST_NUM):
+    for _ in range(test_num):
         chunk, global_chunk_id = next(iter_get_chunk_from_dataset)
         passage_id = retriever.convert_global_chunk_id_to_passage_id(global_chunk_id)
         # Get the text
@@ -56,9 +61,16 @@ def search_with_chunks_from_dataset(retriever: SentenceTransformerRetriever, glo
         # Search for the top-k nearest neighbors
         queries = [text]
         # Search with ignore list
-        results_with_ignore_list: List[Union[str, int]] = retriever.search_batch(queries=queries, k=k, return_as_text=True, passage_to_ignore_list=[passage_id])
+        results_with_ignore_list: List[Union[str, int]] = retriever.search_batch(
+            queries=queries,
+            k=k,
+            return_as_text=True,
+            passage_to_ignore_list=[passage_id],
+        )
         # Search without ignore list
-        results_without_ignore_list: List[Union[str, int]] = retriever.search_batch(queries=queries, k=k, return_as_text=True)
+        results_without_ignore_list: List[Union[str, int]] = retriever.search_batch(
+            queries=queries, k=k, return_as_text=True
+        )
         # Print the results
         logging.info(f"Results with ignore list: {results_with_ignore_list}")
         logging.info(f"Results without ignore list: {results_without_ignore_list}")
@@ -69,12 +81,13 @@ def search_with_chunks_from_dataset(retriever: SentenceTransformerRetriever, glo
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     retriever = SentenceTransformerRetriever(cfg=cfg.retrieval, global_cfg=cfg)
-    
+
     search_with_user_query(retriever)
-    
+
     search_with_chunks_from_dataset(retriever, cfg)
-    
+
     logging.info("Done!")
+
 
 if __name__ == "__main__":
     logging.basicConfig(

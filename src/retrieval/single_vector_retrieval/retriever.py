@@ -1,23 +1,121 @@
 import logging
-from typing import List, Tuple, Union
+import os
+from typing import Dict, List, Optional, Tuple, Union
 
 import faiss
 import numpy as np
 import torch
+from datasets import Dataset
 from omegaconf import DictConfig
+from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 from src.dataset import PintsAIDataset
+from src.retrieval.dataloader import StreamingDataLoader
 from src.tokenization.registry import TOKENIZER_REGISTRY
-from src.utils import is_torch_compile_possible
+from src.utils import AsyncChunkIDSaver, is_main_process, is_torch_compile_possible
 
 logger = logging.getLogger("SentenceTransformerRetriever")
 
 
-class SentenceTransformerRetriever:
-    def __init__(self, cfg: DictConfig, global_cfg: DictConfig) -> None:
+class SentenceTransformerCorpusRetriever:
+    def __init__(
+        self,
+        cfg: DictConfig,
+        global_cfg: DictConfig,
+        save_dir_path: str,
+        device: Optional[torch.device] = None,
+    ):
         self.cfg = cfg
         self.global_cfg = global_cfg
+        self.retriever = SentenceTransformerRetriever(cfg, global_cfg, device)
+        self.save_dir_path = save_dir_path
+        self.__post_init__()
+
+    def __post_init__(self):
+        if not os.path.exists(self.save_dir_path):
+            os.makedirs(self.save_dir_path)
+
+    def retrieve_dataset(
+        self,
+        dataset: Dataset,
+        batch_size: int,
+        data_span_start_idx: int,
+        data_span_end_idx: int,
+        num_dataloader_workers: int = 4,
+    ) -> None:
+        # Create a DataLoader that streams data from the dataset.
+        dataloader = StreamingDataLoader(
+            dataset,
+            start_idx=data_span_start_idx,
+            end_idx=data_span_end_idx,
+            src_tokenizer=self.retriever.collection_tokenizer,
+            tgt_tokenizer=self.retriever.index_tokenizer,
+            chunk_size=self.retriever.chunk_size,
+            batch_size=batch_size,
+            num_workers=num_dataloader_workers,
+        )
+        logger.info(
+            f"Retrieving dataset from {data_span_start_idx} to {data_span_end_idx}"
+        )
+        # Instantiate AsyncSaver to perform disk writes asynchronously.
+        async_saver = AsyncChunkIDSaver(max_queue_size=3)
+
+        disable_tqdm = not is_main_process()
+        for batch_idx, batch in enumerate(
+            tqdm(
+                dataloader,
+                desc="Retrieving dataset",
+                total=len(dataloader),
+                disable=disable_tqdm,
+            )
+        ):
+            bsize: int = (
+                batch["input_ids"].shape[0] // self.retriever.num_chunks_per_passage
+            )
+            # Calculate the starting index for the current batch.
+            min_passage_idx = min(batch["passage_indices"])
+            # Build the file path for this batch.
+            file_path = os.path.join(
+                self.save_dir_path, f"chunk_ids_{min_passage_idx}_{bsize}.npy"
+            )
+
+            # Skip batch if file already exists.
+            if os.path.exists(file_path):
+                continue
+
+            # Move the batch to the model device.
+            batch_input = {
+                "input_ids": batch["input_ids"],
+                "attention_mask": batch["attention_mask"],
+            }
+            passage_indices = [item for item in batch["passage_indices"]]
+
+            # Perform the retrieval.
+            chunk_ids = self.retriever.search_batch_with_tokens(
+                batch_input,
+                k=self.cfg.topk,
+                passage_to_ignore_list=passage_indices,
+            )
+
+            # Enqueue saving the embeddings asynchronously.
+            async_saver.save(file_path, chunk_ids)
+
+        # Wait for all asynchronous saves to complete.
+        async_saver.close()
+        return None
+
+
+class SentenceTransformerRetriever:
+    def __init__(
+        self,
+        cfg: DictConfig,
+        global_cfg: DictConfig,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        self.cfg = cfg
+        self.global_cfg = global_cfg
+        self.device = device
 
     @property
     def use_gpu(self) -> bool:
@@ -58,8 +156,11 @@ class SentenceTransformerRetriever:
                 logger.info("Moving the index to the GPU...")
                 # Create GPU resources
                 res = faiss.StandardGpuResources()
+                # Get the device id
+                # Expects device to be set by torch.cuda.set_device(device) when doing multi-GPU training
+                device_id = torch.cuda.current_device()
                 # Move the index to GPU
-                index = faiss.index_cpu_to_gpu(res, 0, index)  # 0 is the GPU ID
+                index = faiss.index_cpu_to_gpu(res, device_id, index)
                 logger.info("Index moved to the GPU successfully.")
 
             # Set the index
@@ -87,8 +188,17 @@ class SentenceTransformerRetriever:
     def model(self) -> AutoModel:
         if not hasattr(self, "_model"):
             # Set the device map and attention implementation (use GPU if available. Config independent with index)
-            device_map = "cuda:0" if torch.cuda.is_available() else None
-            attn_impl = None if (torch.cuda.is_available() and is_torch_compile_possible()) else "eager"
+            # Expects device to be set by torch.cuda.set_device(device) when doing multi-GPU training
+            device_map = (
+                torch.device(f"cuda:{torch.cuda.current_device()}")
+                if torch.cuda.is_available()
+                else None
+            )
+            attn_impl = (
+                None
+                if (torch.cuda.is_available() and is_torch_compile_possible())
+                else "eager"
+            )
 
             # Load the model
             self._model = AutoModel.from_pretrained(
@@ -103,25 +213,81 @@ class SentenceTransformerRetriever:
                 logger.info("Torch compile is not enabled.")
         return self._model
 
-    def search(self, query: str, k: int, return_as_text: bool = False, passage_id_to_ignore: int = None) -> List[Union[int, str]]:
+    def search(
+        self,
+        query: str,
+        k: int,
+        return_as_text: bool = False,
+        passage_id_to_ignore: int = None,
+    ) -> List[Union[int, str]]:
         """
         Search for the top-k nearest neighbors of a given query string.
         """
-        return self.search_batch([query], k, return_as_text, passage_to_ignore_list=[passage_id_to_ignore])[0]
+        return self.search_batch(
+            [query], k, return_as_text, passage_to_ignore_list=[passage_id_to_ignore]
+        )[0]
 
-    def search_batch(self, queries: List[str], k: int, return_as_text: bool = False, passage_to_ignore_list: List[int] = None) -> List[List[Union[int, str]]]:
+    def search_batch(
+        self,
+        queries: List[str],
+        k: int,
+        return_as_text: bool = False,
+        passage_to_ignore_list: List[int] = None,
+    ) -> List[List[Union[int, str]]]:
         """
         Search for the top-k nearest neighbors for a batch of queries.
         """
-        
         # Encode the queries
         query_embeddings = self.encode_queries(queries)
-        
+
+        return self.search_batch_with_embeddings(
+            query_embeddings, k, return_as_text, passage_to_ignore_list
+        )
+
+    def search_with_tokens(
+        self,
+        tokens: Dict[str, torch.Tensor],
+        k: int,
+        return_as_text: bool = False,
+        passage_to_ignore_list: List[int] = None,
+    ) -> List[List[Union[int, str]]]:
+        """
+        Search for the top-k nearest neighbors for a single token.
+        """
+        return self.search_batch_with_tokens(
+            [tokens], k, return_as_text, passage_to_ignore_list
+        )[0]
+
+    def search_batch_with_tokens(
+        self,
+        tokens_batch: Dict[str, torch.Tensor],
+        k: int,
+        return_as_text: bool = False,
+        passage_to_ignore_list: List[int] = None,
+    ) -> List[List[Union[int, str]]]:
+        """
+        Search for the top-k nearest neighbors for a batch of tokens.
+        """
+        query_embeddings = self.encode_tokens_batch(tokens_batch)
+        return self.search_batch_with_embeddings(
+            query_embeddings, k, return_as_text, passage_to_ignore_list
+        )
+
+    def search_batch_with_embeddings(
+        self,
+        query_embeddings: np.ndarray,
+        k: int,
+        return_as_text: bool = False,
+        passage_to_ignore_list: List[int] = None,
+    ) -> List[List[Union[int, str]]]:
+        """
+        Search for the top-k nearest neighbors for a batch of queries.
+        """
         # Increase the number of k if there are passages to ignore
         original_k: int = k
         if passage_to_ignore_list is not None:
             k = k + self.num_chunks_per_passage
-        
+
         # Search for the top-k nearest neighbors
         _, indices = self.index.search(query_embeddings, k)
         indices: List[List[int]] = [lst.tolist() for lst in indices]
@@ -142,7 +308,11 @@ class SentenceTransformerRetriever:
 
         # Convert the indices to text if requested
         if return_as_text:
-            return [[self.convert_global_chunk_id_to_text(idx) for idx in lst] for lst in indices]
+            return [
+                [self.convert_global_chunk_id_to_text(idx) for idx in lst]
+                for lst in indices
+            ]
+
         return indices
 
     def encode_query(self, query: str) -> np.ndarray:
@@ -156,25 +326,48 @@ class SentenceTransformerRetriever:
         Encode a batch of queries into embeddings, using only the CLS token representation.
         """
         tokens = self.index_tokenizer(queries, return_tensors="pt", padding=True)
+        return self.encode_tokens(tokens)
+
+    def encode_tokens(self, tokens: Dict[str, torch.Tensor]) -> np.ndarray:
+        """
+        Encode a batch of tokens into embeddings, using only the CLS token representation.
+        """
+        tokens_batch = {k: v.unsqueeze(0) for k, v in tokens.items()}
+        return self.encode_tokens_batch(tokens_batch)[0]
+
+    def encode_tokens_batch(self, tokens_batch: Dict[str, torch.Tensor]) -> np.ndarray:
+        """
+        Encode a batch of tokens into embeddings, using only the CLS token representation.
+        """
         device = next(self.model.parameters()).device
-        tokens = {k: v.to(device) for k, v in tokens.items()}
+        tokens_batch = {k: v.to(device) for k, v in tokens_batch.items()}
         with torch.inference_mode():
-            outputs = self.model(**tokens)
-            cls_embeddings = outputs.last_hidden_state[:, 0].cpu().numpy() if torch.cuda.is_available() else outputs.last_hidden_state[:, 0].numpy()
+            outputs = self.model(**tokens_batch)
+            cls_embeddings = (
+                outputs.last_hidden_state[:, 0].cpu().numpy()
+                if torch.cuda.is_available()
+                else outputs.last_hidden_state[:, 0].numpy()
+            )
         return cls_embeddings
 
     def convert_global_chunk_id_to_text(self, global_chunk_id: int) -> str:
         """
         Convert a global chunk ID to the corresponding text.
         """
-        passage_id, local_chunk_id = self.convert_global_chunk_id_to_passage_id_and_local_chunk_id(global_chunk_id)
+        passage_id, local_chunk_id = (
+            self.convert_global_chunk_id_to_passage_id_and_local_chunk_id(
+                global_chunk_id
+            )
+        )
         start_idx = local_chunk_id * self.chunk_size
         end_idx = start_idx + self.chunk_size
         passage = self.collection[passage_id]["input_ids"]
         token_ids = passage[start_idx:end_idx]
         return self.collection_tokenizer.decode(token_ids, skip_special_tokens=True)
 
-    def convert_global_chunk_id_to_passage_id_and_local_chunk_id(self, global_chunk_id: int) -> Tuple[int, int]:
+    def convert_global_chunk_id_to_passage_id_and_local_chunk_id(
+        self, global_chunk_id: int
+    ) -> Tuple[int, int]:
         """
         Convert a global chunk ID to the corresponding passage ID and local chunk ID.
         """
