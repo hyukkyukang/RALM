@@ -17,13 +17,16 @@ services:
             - /mnt/md0/hkkang:/mnt/md0/hkkang
         working_dir: /root/RETRO
         command: >
-            sh -c "echo root | su root -c 'groupadd -g ${GID} usergroup || true' &&
-            echo root | su root -c 'useradd -s /bin/bash -m user -u ${UID} -g ${GID}' &&
-            echo root | su root -c 'echo \"user:user\" | chpasswd' &&
-            echo root | su root -c 'echo \"user ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers' &&
-            echo \"export PATH=/home/user/.local/bin:$PATH\" >> /home/user/.bashrc &&
-            echo \"export PYTHONPATH=/root/RETRO/\" >> /home/user/.bashrc &&
-            tail -f /dev/null"
+            sh -c "
+            if ! id -u user > /dev/null 2>&1; then
+                groupadd -g ${GID} usergroup || true &&
+                useradd -s /bin/bash -m user -u ${UID} -g ${GID} &&
+                echo 'user:user' | chpasswd &&
+                echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers;
+            fi
+            echo 'export PATH=/home/user/.local/bin:$PATH' >> /home/user/.bashrc &&
+            echo 'export PYTHONPATH=/root/RETRO/' >> /home/user/.bashrc &&
+            exec tail -f /dev/null"
         deploy:
             resources:
                 reservations:
