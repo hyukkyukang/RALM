@@ -1,6 +1,7 @@
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
+import copy
 import logging
 import os
 from typing import *
@@ -12,8 +13,9 @@ import torch
 import torch.multiprocessing as mp
 from omegaconf import DictConfig
 
-from src.dataset import DataModule
+from src.dataset import DATASET_REGISTRY
 from src.retrieval import SentenceTransformerCorpusRetriever
+from src.tokenization import ReLlamaTokenizer
 from src.utils import get_ip, get_partition_indices, slack_disable_callback
 
 logger = logging.getLogger("Retrieval")
@@ -49,7 +51,11 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
     # Create a sub-directory for this GPU process to avoid file name collisions.
     server_ip: str = get_ip().replace(".", "_")
     save_dir: str = os.path.join(
-        cfg.retrieval.retrieved_chunk_ids_dir_path, server_ip, f"gpu_{rank}"
+        cfg.retrieval.dir_path,
+        cfg.retrieval.retrieved_chunk_ids_dir,
+        cfg.target_dataset,
+        server_ip,
+        f"gpu_{rank}",
     )
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -59,10 +65,25 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
         cfg.retrieval, cfg, save_dir_path=save_dir, device=device
     )
 
+    # Instantiate the tokenizer.
+    tokenizer = ReLlamaTokenizer.from_pretrained(cfg.model.base_name)
+
+    # Create a temporary global config with retrieval disabled.
+    # To avoid recursive loading of the entangled datasets: RetrievedChunkDataset and BaseDataset
+    global_cfg_tmp = copy.deepcopy(cfg)
+    global_cfg_tmp.model.is_use_retrieval = False
+
     # Load the dataset from disk.
-    data_module = DataModule(cfg=cfg)
-    data_module.setup()
-    dataset = data_module.train_dataset
+    dataset_name = cfg.target_dataset
+    dataset_cls = DATASET_REGISTRY[dataset_name]
+    dataset = dataset_cls(
+        cfg=global_cfg_tmp.dataset[dataset_name],
+        global_cfg=global_cfg_tmp,
+        tokenizer=tokenizer,
+    )
+    dataset.post_processed_data = dataset.load_from_disk(
+        dataset.post_process_cache_path
+    )
     total_len = len(dataset)
 
     # Partition the dataset indices.
@@ -88,6 +109,8 @@ def main(cfg: DictConfig) -> None:
     # Determine the number of GPUs available.
     world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
     logger.info(f"Starting retrieval with {world_size} GPU(s).")
+
+    assert cfg.target_dataset is not None, "Set the target dataset in the config"
 
     if world_size > 1:
         # Spawn a process per GPU.

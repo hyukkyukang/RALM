@@ -28,8 +28,8 @@ class SentenceTransformerCorpusEncoder:
         save_dir_path: str,
         device: torch.device = "cpu",
         enable_torch_compile: bool = True,
-        chunk_size: int = 64,
         passage_size: int = 512,
+        chunk_size: int = 64,
     ):
         self.model_name = model_name
         self.src_tokenizer_name = src_tokenizer_name

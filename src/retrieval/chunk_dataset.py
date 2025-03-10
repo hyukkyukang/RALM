@@ -1,7 +1,7 @@
+import copy
 import json
 import logging
 import os
-from functools import cached_property
 from pathlib import Path
 from typing import *
 
@@ -10,52 +10,33 @@ import tqdm
 from datasets import Dataset
 from omegaconf import DictConfig
 
-from src.retrieval.utils import validate_saved_numpy_files
+from src.retrieval.utils import (
+    convert_global_chunk_id_to_passage_id_and_local_chunk_range,
+    validate_saved_numpy_files,
+)
+from src.tokenization import ReLlamaTokenizer
 from src.utils import get_numpy_file_paths_in_dir
 
 logger = logging.getLogger("RetrievedChunkDataset")
 
 
 class RetrievedChunkDataset(Dataset):
-    def __init__(self, cfg: DictConfig, global_cfg: DictConfig):
+    def __init__(self, dataset_name: str, cfg: DictConfig, global_cfg: DictConfig):
         self.cfg = cfg
         self.global_cfg = global_cfg
+        self.dataset_name = dataset_name
         self.__post_init__()
-
-    @property
-    def meta_file_path(self) -> str:
-        return os.path.join(
-            self.cfg.retrieved_chunk_ids_dir_path,
-            self.cfg.meta_file_name,
-        )
-
-    @property
-    def chunk_ids_shard_paths(self) -> List[str]:
-        """Shard is the partitioned data after combining the distributed chunk ids."""
-        return self.meta_data["chunk_ids_shard_paths"]
-
-    @cached_property
-    def meta_data(self) -> Dict[str, Any]:
-        meta_file = json.load(open(self.meta_file_path))
-        return meta_file
-
-    @property
-    def data(self) -> List[Dataset]:
-        if not hasattr(self, "_data"):
-            # Load all shards.
-            shard_paths = self.chunk_ids_shard_paths
-            shards: List[Dataset] = [
-                Dataset.load_from_disk(path) for path in tqdm.tqdm(shard_paths)
-            ]
-            self._data = shards
-        return self._data
 
     def __post_init__(self):
         # Load the individual shard chunk ids and combine them into .
         if not os.path.exists(self.meta_file_path):
             self._combine_distributed_chunk_ids_to_shards()
         # Load the datasets into memory.
+        logger.info("Loading datasets into memory...")
         self.data
+        # Load the corpus into memory.
+        logger.info("Loading corpus into memory...")
+        self.corpus
         return None
 
     def __len__(self) -> int:
@@ -71,7 +52,82 @@ class RetrievedChunkDataset(Dataset):
         shard_idx = min(shard_idx, len(self.data) - 1)
         shard = self.data[shard_idx]
         local_idx = idx % self.cfg.shard_size
-        return shard[local_idx]["chunk_ids"]
+        # Get the chunk ids for the item at index idx.
+        chunk_ids: List[int] = shard[local_idx]["chunk_ids"]
+        chunk_id = chunk_ids[0]
+        # Convert the chunk ids to global chunk ids.
+        passage_id, local_chunk_start_idx, local_chunk_end_idx = (
+            convert_global_chunk_id_to_passage_id_and_local_chunk_range(
+                chunk_id,
+                self.num_chunks_per_passage,
+                self.global_cfg.model.input_chunk_size,
+            )
+        )
+        # Get the actual token ids for the retrieved chunk ids
+        chunk_token_ids: List[int] = self.corpus[passage_id]["input_ids"][
+            local_chunk_start_idx:local_chunk_end_idx
+        ]
+        return chunk_token_ids
+
+    @property
+    def num_chunks_per_passage(self) -> int:
+        return (
+            self.global_cfg.model.max_length // self.global_cfg.model.input_chunk_size
+        )
+
+    @property
+    def meta_file_path(self) -> str:
+        return os.path.join(
+            self.global_cfg.root_dir_path,
+            self.cfg.dir_path,
+            self.cfg.retrieved_chunk_ids_dir,
+            self.dataset_name,
+            self.cfg.meta_file_name,
+        )
+
+    @property
+    def chunk_ids_shard_paths(self) -> List[str]:
+        """Shard is the partitioned data after combining the distributed chunk ids."""
+        return self.meta_data["chunk_ids_shard_paths"]
+
+    @property
+    def meta_data(self) -> Dict[str, Any]:
+        if not hasattr(self, "_meta_data"):
+            meta_file = json.load(open(self.meta_file_path))
+            self._meta_data = meta_file
+        return self._meta_data
+
+    @property
+    def data(self) -> List[Dataset]:
+        if not hasattr(self, "_data"):
+            # Load all shards.
+            shard_paths = self.chunk_ids_shard_paths
+            shards: List[Dataset] = [
+                Dataset.load_from_disk(path) for path in tqdm.tqdm(shard_paths)
+            ]
+            self._data = shards
+        return self._data
+
+    @property
+    def corpus(self) -> Dataset:
+        if not hasattr(self, "_corpus"):
+            # To avoid recursive loading of the entangled datasets: RetrievedChunkDataset and BaseDataset
+            global_cfg = copy.deepcopy(self.global_cfg)
+            global_cfg.model.is_use_retrieval = False
+
+            tokenizer = ReLlamaTokenizer.from_pretrained(global_cfg.model.base_name)
+            from src.dataset import DATASET_REGISTRY
+
+            corpus = DATASET_REGISTRY[self.cfg.corpus_name](
+                cfg=global_cfg.dataset[self.cfg.corpus_name],
+                global_cfg=global_cfg,
+                tokenizer=tokenizer,
+            )
+            corpus.post_processed_data = corpus.load_from_disk(
+                corpus.post_process_cache_path
+            )
+            self._corpus = corpus
+        return self._corpus
 
     def _combine_distributed_chunk_ids_to_shards(self) -> None:
         """
@@ -85,7 +141,12 @@ class RetrievedChunkDataset(Dataset):
         5. Saves each shard as a Dataset object
         6. Creates a metadata file with paths to all shards
         """
-        dir_path: str = self.cfg.retrieved_chunk_ids_dir_path
+        dir_path: str = os.path.join(
+            self.global_cfg.root_dir_path,
+            self.cfg.dir_path,
+            self.cfg.retrieved_chunk_ids_dir,
+            self.dataset_name,
+        )
         all_chunk_ids_paths: List[str] = get_numpy_file_paths_in_dir(dir_path)
 
         # Validate saved files using file naming (order is not important for validation)

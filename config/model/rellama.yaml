@@ -2,7 +2,7 @@ name: rellama
 base_name: meta-llama/Llama-3.2-1B
 max_length: 1024
 input_chunk_size: 64
-retrieval_chunk_size: 64
+retrieval_chunk_size: 128
 is_use_retrieval: true
 defaults:
   - _self_

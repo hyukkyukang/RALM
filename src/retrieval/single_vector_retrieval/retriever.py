@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import faiss
 import numpy as np
@@ -10,8 +10,11 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
-from src.dataset import PintsAIDataset
 from src.retrieval.dataloader import StreamingCorpusDataLoader
+from src.retrieval.utils import (
+    convert_global_chunk_id_to_passage_id,
+    convert_global_chunk_id_to_passage_id_and_local_chunk_range,
+)
 from src.tokenization.registry import TOKENIZER_REGISTRY
 from src.utils import AsyncChunkIDSaver, is_main_process, is_torch_compile_possible
 
@@ -35,6 +38,10 @@ class SentenceTransformerCorpusRetriever:
     def __post_init__(self):
         if not os.path.exists(self.save_dir_path):
             os.makedirs(self.save_dir_path)
+
+    @property
+    def dummy_retrieved_chunk_ids(self) -> List[List[int]]:
+        return [-1] * self.cfg.topk
 
     def retrieve_dataset(
         self,
@@ -70,14 +77,13 @@ class SentenceTransformerCorpusRetriever:
                 disable=disable_tqdm,
             )
         ):
-            bsize: int = (
-                batch["input_ids"].shape[0] // self.retriever.num_chunks_per_passage
-            )
+            num_passages: int = len(batch["num_chunks"])
             # Calculate the starting index for the current batch.
             min_passage_idx = min(batch["passage_indices"])
             # Build the file path for this batch.
             file_path = os.path.join(
-                self.save_dir_path, f"chunk_ids_{min_passage_idx}_{bsize}.npy"
+                self.save_dir_path,
+                f"chunk_ids_{min_passage_idx}_{num_passages}.npy",
             )
 
             # Skip batch if file already exists.
@@ -92,11 +98,35 @@ class SentenceTransformerCorpusRetriever:
             passage_indices = [item for item in batch["passage_indices"]]
 
             # Perform the retrieval.
-            chunk_ids = self.retriever.search_batch_with_tokens(
+            chunk_ids: List[List[int]] = self.retriever.search_batch_with_tokens(
                 batch_input,
                 k=self.cfg.topk,
                 passage_to_ignore_list=passage_indices,
             )
+
+            # Add dummy chunk_ids if the number of chunks is less than the maximum number of chunks per passage.
+            new_chunk_ids: List[List[int]] = []
+
+            # Check if the number of chunks per passage is greater than the maximum number of chunks per passage.
+            # We need this condition for the code to work.
+            assert (
+                max(batch["num_chunks"]) <= self.retriever.num_chunks_per_passage
+            ), "The number of chunks per passage is greater than the maximum number of chunks per passage."
+
+            # Add the retrieved chunk_ids and dummy chunk_ids.
+            cnt = 0
+            for num_chunks in batch["num_chunks"]:
+                # Add the retrieved chunk_ids
+                new_chunk_ids.extend(chunk_ids[cnt : cnt + num_chunks])
+                cnt += num_chunks
+
+                # Add dummy chunk_ids if the number of chunks is less than the maximum number of chunks per passage.
+                if num_chunks < self.retriever.num_chunks_per_passage:
+                    for _ in range(self.retriever.num_chunks_per_passage - num_chunks):
+                        new_chunk_ids.append(self.dummy_retrieved_chunk_ids)
+
+            # Replace the old chunk_ids with the new chunk_ids
+            chunk_ids = new_chunk_ids
 
             # Enqueue saving the embeddings asynchronously.
             async_saver.save(file_path, chunk_ids)
@@ -123,17 +153,19 @@ class SentenceTransformerRetriever:
 
     @property
     def chunk_size(self) -> int:
-        return self.cfg.encoding.chunk_size
+        return self.global_cfg.model.input_chunk_size
 
     @property
     def num_chunks_per_passage(self) -> int:
-        return self.cfg.encoding.passage_size // self.chunk_size
+        return self.global_cfg.model.max_length // self.chunk_size
 
     @property
     def collection(self) -> List[str]:
         if not hasattr(self, "_collection"):
             logger.info("Loading the collection...")
-            dataset = PintsAIDataset(
+            from src.dataset import DATASET_REGISTRY
+
+            dataset = DATASET_REGISTRY[self.cfg.corpus_name](
                 self.global_cfg.dataset.pints_ai,
                 self.global_cfg,
                 self.collection_tokenizer,
@@ -149,7 +181,13 @@ class SentenceTransformerRetriever:
     def index(self) -> faiss.Index:
         if not hasattr(self, "_index"):
             logger.info("Loading the index...")
-            index = faiss.read_index(self.cfg.indexing.index_path)
+            index_path = os.path.join(
+                self.global_cfg.root_dir_path,
+                self.cfg.dir_path,
+                self.cfg.indexing.index_dir,
+                f"{self.cfg.corpus_name}_{self.cfg.indexing.index_file_name}",
+            )
+            index = faiss.read_index(index_path)
 
             # Move the index to GPU if GPU is available
             if self.use_gpu:
@@ -298,7 +336,9 @@ class SentenceTransformerRetriever:
                 filtered_lst: List[int] = []
                 for idx, item in enumerate(lst):
                     # Convert the global chunk ID to the passage ID
-                    passage_id: int = self.convert_global_chunk_id_to_passage_id(item)
+                    passage_id: int = convert_global_chunk_id_to_passage_id(
+                        item, self.num_chunks_per_passage
+                    )
                     if passage_id != passage_to_ignore_list[b_idx]:
                         filtered_lst.append(item)
                 indices[b_idx] = filtered_lst
@@ -354,35 +394,11 @@ class SentenceTransformerRetriever:
         """
         Convert a global chunk ID to the corresponding text.
         """
-        passage_id, local_chunk_id = (
-            self.convert_global_chunk_id_to_passage_id_and_local_chunk_id(
-                global_chunk_id
+        passage_id, chunk_start_idx, chunk_end_idx = (
+            convert_global_chunk_id_to_passage_id_and_local_chunk_range(
+                global_chunk_id, self.num_chunks_per_passage, self.chunk_size
             )
         )
-        start_idx = local_chunk_id * self.chunk_size
-        end_idx = start_idx + self.chunk_size
         passage = self.collection[passage_id]["input_ids"]
-        token_ids = passage[start_idx:end_idx]
+        token_ids = passage[chunk_start_idx:chunk_end_idx]
         return self.collection_tokenizer.decode(token_ids, skip_special_tokens=True)
-
-    def convert_global_chunk_id_to_passage_id_and_local_chunk_id(
-        self, global_chunk_id: int
-    ) -> Tuple[int, int]:
-        """
-        Convert a global chunk ID to the corresponding passage ID and local chunk ID.
-        """
-        passage_id = self.convert_global_chunk_id_to_passage_id(global_chunk_id)
-        local_chunk_id = self.convert_global_chunk_id_to_local_chunk_id(global_chunk_id)
-        return passage_id, local_chunk_id
-
-    def convert_global_chunk_id_to_passage_id(self, global_chunk_id: int) -> int:
-        """
-        Convert a global chunk ID to the corresponding passage ID.
-        """
-        return global_chunk_id // self.num_chunks_per_passage
-
-    def convert_global_chunk_id_to_local_chunk_id(self, global_chunk_id: int) -> int:
-        """
-        Convert a global chunk ID to the corresponding local chunk ID.
-        """
-        return global_chunk_id % self.num_chunks_per_passage

@@ -56,11 +56,14 @@ def process_partition(rank: int, world_size: int, cfg: DictConfig) -> None:
         save_dir_path=save_dir,
         device=device,
         enable_torch_compile=cfg.use_torch_compile,
-        chunk_size=cfg.retrieval.encoding.chunk_size,
-        passage_size=cfg.retrieval.encoding.passage_size,
+        passage_size=cfg.model.max_length,
+        chunk_size=cfg.model.input_chunk_size,
     )
 
     # Load the dataset from disk.
+    raise NotImplementedError(
+        "Remove the DataModule and use the Pints_AI dataset directly. But the corpus name should be inferred from the cfg.retrieval"
+    )
     data_module = DataModule(cfg=cfg)
     data_module.setup()
     dataset = data_module.train_dataset

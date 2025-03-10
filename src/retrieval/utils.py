@@ -81,3 +81,53 @@ def load_embedding_file(path: str) -> np.ndarray:
     if arr.ndim == 1:
         arr = arr.reshape(1, -1)
     return arr
+
+
+def convert_global_chunk_id_to_passage_id_and_local_chunk_range(
+    global_chunk_id: int, num_chunks_per_passage: int, chunk_size: int
+) -> Tuple[int, int, int]:
+    """
+    Convert a global chunk ID to the corresponding passage ID and local chunk ID.
+    """
+    passage_id = convert_global_chunk_id_to_passage_id(
+        global_chunk_id, num_chunks_per_passage
+    )
+    local_chunk_id = convert_global_chunk_id_to_local_chunk_id(
+        global_chunk_id, num_chunks_per_passage
+    )
+    chunk_start_idx = local_chunk_id * chunk_size
+    chunk_end_idx = chunk_start_idx + chunk_size
+    return passage_id, chunk_start_idx, chunk_end_idx
+
+
+def convert_global_chunk_id_to_passage_id_and_local_chunk_id(
+    global_chunk_id: int, num_chunks_per_passage: int
+) -> Tuple[int, int]:
+    """
+    Convert a global chunk ID to the corresponding passage ID and local chunk ID.
+    """
+    passage_id = convert_global_chunk_id_to_passage_id(
+        global_chunk_id, num_chunks_per_passage
+    )
+    local_chunk_id = convert_global_chunk_id_to_local_chunk_id(
+        global_chunk_id, num_chunks_per_passage
+    )
+    return passage_id, local_chunk_id
+
+
+def convert_global_chunk_id_to_passage_id(
+    global_chunk_id: int, num_chunks_per_passage: int
+) -> int:
+    """
+    Convert a global chunk ID to the corresponding passage ID.
+    """
+    return global_chunk_id // num_chunks_per_passage
+
+
+def convert_global_chunk_id_to_local_chunk_id(
+    global_chunk_id: int, num_chunks_per_passage: int
+) -> int:
+    """
+    Convert a global chunk ID to the corresponding local chunk ID.
+    """
+    return global_chunk_id % num_chunks_per_passage

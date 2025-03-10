@@ -25,9 +25,14 @@ class WikiTextDataset(BaseDataset):
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data)
+        super().__init__(
+            cfg,
+            global_cfg,
+            tokenizer,
+            tokenized_data,
+            post_processed_data,
+        )
 
     @cached_property
     def collator(self) -> "WikiTextDataCollator":
@@ -122,12 +127,22 @@ class WikiTextDataCollator:
             # Add to total character count
             total_chars_cnt += len(decoded_text)
 
+        # Collate the retrieved chunk token ids
+        if "retrieved_chunk_token_ids" in examples[0]:
+            retrieved_chunk_token_ids = torch.tensor(
+                [example["retrieved_chunk_token_ids"] for example in examples],
+                dtype=torch.long,
+                device="cpu",
+            )
+        else:
+            retrieved_chunk_token_ids = None
+
         # Update batch with computed values
         batch.update(
             {
                 "total_chars_cnt": total_chars_cnt,
                 # TODO: Implement this for self.is_use_retrieval==True
-                "retrieved_chunk_ids": None,
+                "retrieved_chunk_token_ids": retrieved_chunk_token_ids,
             }
         )
 

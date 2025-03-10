@@ -24,9 +24,14 @@ class LambadaDataset(BaseDataset):
         tokenizer: ReLlamaTokenizer,
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data)
+        super().__init__(
+            cfg,
+            global_cfg,
+            tokenizer,
+            tokenized_data,
+            post_processed_data,
+        )
 
     @cached_property
     def collator(self) -> "LambadaDataCollator":
@@ -119,6 +124,16 @@ class LambadaDataCollator:
                     item = example[key]
                 batch[key].append(item)
 
+        # Collate the retrieved chunk token ids
+        if "retrieved_chunk_token_ids" in examples[0]:
+            retrieved_chunk_token_ids = torch.tensor(
+                [example["retrieved_chunk_token_ids"] for example in examples],
+                dtype=torch.long,
+                device="cpu",
+            )
+        else:
+            retrieved_chunk_token_ids = None
+
         # TODO: Implement this for self.is_use_retrieval==True
-        batch["retrieved_chunk_ids"] = None
+        batch["retrieved_chunk_ids"] = retrieved_chunk_token_ids
         return batch

@@ -19,9 +19,9 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     ), f"Passage idx are not continuous"
 
     # Compute the number of chunks in each passage
-    num_chunks_per_passage = len(batch[0]["input_ids"])
     passage_indices: List[int] = []
     for example in batch:
+        num_chunks_per_passage = example["num_chunks"]
         passage_indices.extend([example["passage_idx"]] * num_chunks_per_passage)
 
     # Collect all tensors from the batch
@@ -33,6 +33,7 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     result["input_ids"] = torch.cat(result["input_ids"], dim=0)
     result["attention_mask"] = torch.cat(result["attention_mask"], dim=0)
     result["passage_indices"] = passage_indices
+    result["num_chunks"] = [item["num_chunks"] for item in batch]
     return result
 
 
@@ -165,6 +166,7 @@ class StreamingDataset(torch.utils.data.IterableDataset):
             input_ids[i : i + self.chunk_size]
             for i in range(0, len(input_ids), self.chunk_size)
         ]
+        num_chunks = len(chunks)
 
         # Decode all chunks at once
         texts: List[str] = self.src_tokenizer.batch_decode(
@@ -203,4 +205,5 @@ class StreamingDataset(torch.utils.data.IterableDataset):
             "input_ids": stacked_input_ids,
             "attention_mask": stacked_attention_masks,
             "passage_idx": passage_idx,
+            "num_chunks": num_chunks,
         }

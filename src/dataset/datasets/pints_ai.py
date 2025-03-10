@@ -28,7 +28,6 @@ class PintsAIDataset(BaseDataset):
         tokenizer: ReLlamaTokenizer,
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
     ):
         super().__init__(
             cfg,
@@ -36,7 +35,6 @@ class PintsAIDataset(BaseDataset):
             tokenizer,
             tokenized_data,
             post_processed_data,
-            retrieved_data,
         )
 
     @cached_property
@@ -261,6 +259,16 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
             return_total_valid_tokens=True,
         )
 
+        # Collate the retrieved chunk token ids
+        if "retrieved_chunk_token_ids" in examples[0]:
+            retrieved_chunk_token_ids = torch.tensor(
+                [example["retrieved_chunk_token_ids"] for example in examples],
+                dtype=torch.long,
+                device="cpu",
+            )
+        else:
+            retrieved_chunk_token_ids = None
+
         # Update batch with computed values
         batch.update(
             {
@@ -269,7 +277,7 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
                     total_valid_tokens_cnt, dtype=torch.int64
                 ),
                 # TODO: Implement this for self.is_use_retrieval==True
-                "retrieved_chunk_ids": None,
+                "retrieved_chunk_token_ids": retrieved_chunk_token_ids,
             }
         )
 

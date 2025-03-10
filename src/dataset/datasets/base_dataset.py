@@ -11,10 +11,12 @@ from datasets import load_dataset as hf_load_dataset
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
+from src.retrieval import RetrievedChunkDataset
 from src.tokenization import ReLlamaTokenizer
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("BaseDataset")
+
 
 class BaseDataset:
     def __init__(
@@ -24,7 +26,6 @@ class BaseDataset:
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
     ):
         self.cfg = cfg
         self.global_cfg = global_cfg
@@ -35,8 +36,7 @@ class BaseDataset:
         self.tokenized_data: Optional[Dataset] = tokenized_data
         # Dataset objects that is post-processed after tokenization
         self.post_processed_data: Optional[Dataset] = post_processed_data
-        # Dataset objects that is retrieved after post-processing
-        self.retrieved_data: Optional[Dataset] = retrieved_data
+
     def __len__(self):
         if self.post_processed_data is None:
             return 0
@@ -46,19 +46,14 @@ class BaseDataset:
         if self.post_processed_data is None:
             return None
         processed_data = self.post_processed_data[idx]
-        return processed_data
-        # TODO: Uncomment this when retrieval is implemented
-        # if self.is_use_retrieval:
-        #     assert self.retrieved_data is not None, "Retrieved data is not loaded"
-        #     # Get the retrieved data
-        #     retrieved_data = self.retrieved_data[idx]
-        #     # Combine the post-processed data and the retrieved data
-        #     data_to_return = processed_data.copy()
-        #     data_to_return.update(retrieved_data)
-        # else:
-        #     data_to_return = processed_data
-        # return data_to_return
 
+        if self.is_use_retrieval:
+            # Get the retrieved data
+            retrievd_chunk_token_ids: List[int] = self.retrieved_chunk_dataset[idx]
+            processed_data.update(
+                {"retrieved_chunk_token_ids": retrievd_chunk_token_ids}
+            )
+        return processed_data
 
     @cached_property
     @abc.abstractmethod
@@ -94,9 +89,10 @@ class BaseDataset:
 
     @property
     def is_use_retrieval(self) -> bool:
-        return False
-        # TODO: Uncomment this when retrieval is implemented
-        # return self.global_cfg.model.name == "rellama" and self.global_cfg.model.is_use_retrieval
+        return (
+            self.global_cfg.model.name == "rellama"
+            and self.global_cfg.model.is_use_retrieval
+        )
 
     @property
     def hf_cache_dir_path(self) -> str:
@@ -112,11 +108,6 @@ class BaseDataset:
         # Get tokenizer name from the tokenizer class
         tokenizer_name = self.tokenizer.name_or_path.replace("/", "_")
         return os.path.join(self.hf_cache_dir_path, f"{tokenizer_name}_tokenized")
-
-    @property
-    def retrieved_data_cache_path(self) -> str:
-        chunk_size = self.global_cfg.model.retrieval_chunk_size
-        return os.path.join(self.post_process_cache_path, f"retrieval_cache_{chunk_size}")
 
     @property
     def total_tokens(self) -> int:
@@ -142,6 +133,19 @@ class BaseDataset:
             # Sum the results
             self._total_tokens = sum(multiprocessor.results)
         return self._total_tokens
+
+    @property
+    def retrieved_chunk_dataset(self) -> Union[RetrievedChunkDataset, None]:
+        if not hasattr(self, "_retrieved_chunk_dataset"):
+            if self.is_use_retrieval:
+                self._retrieved_chunk_dataset = RetrievedChunkDataset(
+                    dataset_name=self.name,
+                    cfg=self.global_cfg.retrieval,
+                    global_cfg=self.global_cfg,
+                )
+            else:
+                self._retrieved_chunk_dataset = None
+        return self._retrieved_chunk_dataset
 
     def _count_tokens(self, process_idx: int, data: Dataset, indices: List[int]) -> int:
         enable_tqdm = process_idx == 0
@@ -183,13 +187,21 @@ class BaseDataset:
 
     def retrieve_data(self) -> None:
         # TODO: Need to implement this here.
-        num_of_chunks = self.global_cfg.model.max_length // self.global_cfg.model.input_chunk_size - 1
-        dummy_chunk_ids: List[List[int]] = [list(range(0, self.global_cfg.model.retrieval_chunk_size))] * num_of_chunks
+        num_of_chunks = (
+            self.global_cfg.model.max_length // self.global_cfg.model.input_chunk_size
+            - 1
+        )
+        dummy_chunk_ids: List[List[int]] = [
+            list(range(0, self.global_cfg.model.retrieval_chunk_size))
+        ] * num_of_chunks
         self.retrieved_data = Dataset.from_dict(
             {
                 "retrieved_chunk_ids": [
                     dummy_chunk_ids
-                    for _ in tqdm.tqdm(range(len(self.post_processed_data)), desc="Creating dummy retrieval data")
+                    for _ in tqdm.tqdm(
+                        range(len(self.post_processed_data)),
+                        desc="Creating dummy retrieval data",
+                    )
                 ]
             }
         )
@@ -253,41 +265,6 @@ class BaseDataset:
         )
         return None
 
-    def retrieve_and_save_to_disk(self, overwrite: bool = False) -> None:
-        """Save the retrieved data to disk after post-processing.
-        Save the data in the sub-directory of the post-processed data (i.e., self.retrieved_data_cache_path).
-        The number of items should be the same as the number of items in the post-processed data.
-        We will reference it by the same index of the post-processed data.
-        """
-        assert self.post_processed_data is not None, "Post-processed data is not loaded"
-        # Check if the retrieved data already exists
-        path = self.retrieved_data_cache_path
-        if os.path.exists(path) and not overwrite:
-            log_if_rank_zero(
-                logger,
-                f"Retrieved data already exists at {path}. Skip retrieval.",
-            )
-            self.retrieved_data: Dataset = self.load_from_disk(path)
-            return None
-
-        # Run retrieval
-        self.retrieve_data()
-        assert len(self.retrieved_data) == len(self.post_processed_data), \
-            f"The number of retrieved data should be the same as the number of post-processed data: {len(self.retrieved_data)} != {len(self.post_processed_data)}"
-
-        # Save to disk
-        log_if_rank_zero(
-            logger,
-            f"Saving {len(self.retrieved_data)} retrieved examples to {path}",
-        )
-        self.save_to_disk(
-            dataset=self.retrieved_data,
-            path=path,
-            overwrite=False,
-        )
-        return None
-    
-    
     def save_to_disk(
         self, dataset: Dataset, path: str, overwrite: bool = False
     ) -> None:

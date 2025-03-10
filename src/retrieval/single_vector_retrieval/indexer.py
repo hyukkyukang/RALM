@@ -186,8 +186,7 @@ class SentenceTransformerCorpusIndexer:
         """
         num_of_passages = int(file_name.split("_")[-1].split(".")[0])
         chunk_per_passage: int = (
-            self.global_cfg.retrieval.encoding.passage_size
-            // self.global_cfg.retrieval.encoding.chunk_size
+            self.global_cfg.model.max_length // self.global_cfg.model.input_chunk_size
         )
         return num_of_passages * chunk_per_passage
 

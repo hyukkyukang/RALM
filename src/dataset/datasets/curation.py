@@ -25,7 +25,6 @@ class CurationDataset(BaseDataset):
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
     ):
         super().__init__(
             cfg,
@@ -33,7 +32,6 @@ class CurationDataset(BaseDataset):
             tokenizer,
             tokenized_data,
             post_processed_data,
-            retrieved_data,
         )
 
     @cached_property
@@ -188,6 +186,7 @@ class CurationDataCollator(DataCollatorForLanguageModeling):
             "input_ids": self.tokenizer.pad_token_id,
             "attention_mask": 0,
             "labels": INVALID_TOKEN_ID,
+            "retrieved_chunk_token_ids": self.tokenizer.pad_token_id,
         }
         batch = {
             key: torch.full(
@@ -217,12 +216,22 @@ class CurationDataCollator(DataCollatorForLanguageModeling):
             decoded_text = self.tokenizer.decode(valid_tokens, skip_special_tokens=True)
             total_chars_cnt += len(decoded_text)
 
+        # Collate the retrieved chunk token ids
+        if "retrieved_chunk_token_ids" in examples[0]:
+            retrieved_chunk_token_ids = torch.tensor(
+                [example["retrieved_chunk_token_ids"] for example in examples],
+                dtype=torch.long,
+                device="cpu",
+            )
+        else:
+            retrieved_chunk_token_ids = None
+
         # Update batch with computed values
         batch.update(
             {
                 "total_chars_cnt": total_chars_cnt,
                 # TODO: Implement this for self.is_use_retrieval==True
-                "retrieved_chunk_ids": None,
+                "retrieved_chunk_token_ids": retrieved_chunk_token_ids,
             }
         )
 
