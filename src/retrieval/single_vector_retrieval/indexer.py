@@ -5,34 +5,20 @@ import os
 import random
 import warnings
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 import faiss
 import numpy as np
 import tqdm
 from omegaconf import DictConfig
 
+from src.retrieval.utils import load_embedding_file, validate_saved_numpy_files
+
 # Ignore future warnings from dependencies
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 # Configure logger for the indexer
 logger = logging.getLogger("Indexer")
-
-
-def load_embedding_file(path: str) -> np.ndarray:
-    """
-    Load an embedding file as a numpy array using memory mapping for efficiency.
-
-    Parameters:
-        path (str): The file path to the .npy embedding file.
-
-    Returns:
-        np.ndarray: The embedding array. Reshaped to 2D if originally 1D.
-    """
-    arr: np.ndarray = np.load(path, mmap_mode="r")
-    if arr.ndim == 1:
-        arr = arr.reshape(1, -1)
-    return arr
 
 
 class SentenceTransformerCorpusIndexer:
@@ -58,35 +44,6 @@ class SentenceTransformerCorpusIndexer:
         """
         random.seed(self.global_cfg.seed)
 
-    def load_exact_sample_embeddings(
-        self, file_paths: List[str], sample_size: int
-    ) -> np.ndarray:
-        """
-        Load exactly 'sample_size' embeddings by iterating over file paths in order.
-
-        Parameters:
-            file_paths (List[str]): List of embedding file paths in the order provided.
-            sample_size (int): Exact number of embeddings to load for training.
-
-        Returns:
-            np.ndarray: A 2D numpy array containing exactly 'sample_size' embeddings.
-        """
-        embeddings_list: List[np.ndarray] = []
-        total_loaded: int = 0
-
-        # Iterate over file paths and load embeddings until we've reached the desired sample_size
-        for path in file_paths:
-            arr: np.ndarray = load_embedding_file(path)
-            embeddings_list.append(arr)
-            total_loaded += arr.shape[0]
-            if total_loaded >= sample_size:
-                break
-
-        # Stack all loaded embeddings into one 2D array
-        stacked: np.ndarray = np.vstack(embeddings_list)
-        # Slice the array to return exactly sample_size embeddings if more were loaded.
-        return stacked[:sample_size]
-
     def __call__(self) -> None:
         """
         Execute the indexing process using GPU for training:
@@ -108,9 +65,7 @@ class SentenceTransformerCorpusIndexer:
         logger.info(
             f"Validating saved embedding files in {self.global_cfg.retrieval.embedding_dir_path}"
         )
-        self.validate_saved_embedding_files(
-            all_embedding_paths, read_file_content=False
-        )
+        validate_saved_numpy_files(all_embedding_paths, read_file_content=False)
 
         # Calculate the total number of embeddings from file names.
         total_num_of_embeddings: int = self.get_number_of_embeddings(
@@ -236,63 +191,31 @@ class SentenceTransformerCorpusIndexer:
         )
         return num_of_passages * chunk_per_passage
 
-    def validate_saved_embedding_files(
-        self, paths: List[str], read_file_content: bool = False
-    ) -> bool:
+    def load_exact_sample_embeddings(
+        self, file_paths: List[str], sample_size: int
+    ) -> np.ndarray:
         """
-        Validate that all saved embedding files are present and contain embeddings.
-        We use the file name to check that all consecutive embeddings are present.
-
-        For instance, a file named "embeddings_16508182_200.npy" indicates that the file contains
-        the 16508182nd to 16508381st passage embeddings.
+        Load exactly 'sample_size' embeddings by iterating over file paths in order.
 
         Parameters:
-            paths (List[str]): List of file paths to validate.
-            read_file_content (bool): Whether to read the file content to check the number of embeddings.
+            file_paths (List[str]): List of embedding file paths in the order provided.
+            sample_size (int): Exact number of embeddings to load for training.
 
         Returns:
-            bool: True if the files are valid, False otherwise.
+            np.ndarray: A 2D numpy array containing exactly 'sample_size' embeddings.
         """
-        # Parse file names to extract (start_index, count) for each file.
-        file_info: List[Tuple[int, int, str]] = []
-        for path in paths:
-            stem = Path(path).stem  # e.g. "embeddings_16508182_200"
-            parts = stem.split("_")
-            if len(parts) < 3:
-                logger.error(f"Invalid file name format: {path}")
-                continue
-            try:
-                start_index = int(parts[-2])
-                count = int(parts[-1])
-            except ValueError:
-                logger.error(
-                    f"Could not parse start index or count in file name: {path}"
-                )
-                continue
-            file_info.append((start_index, count, path))
+        embeddings_list: List[np.ndarray] = []
+        total_loaded: int = 0
 
-        # Sort the file info by start_index.
-        file_info.sort(key=lambda x: x[0])
+        # Iterate over file paths and load embeddings until we've reached the desired sample_size
+        for path in file_paths:
+            arr: np.ndarray = load_embedding_file(path)
+            embeddings_list.append(arr)
+            total_loaded += arr.shape[0]
+            if total_loaded >= sample_size:
+                break
 
-        # Validate consecutive passage indices.
-        expected_start: int = None
-        for start_index, count, path in file_info:
-            if read_file_content:
-                arr = load_embedding_file(path)
-                if arr.shape[0] != count:
-                    raise ValueError(
-                        f"File {path} claims {count} embeddings in its name but contains {arr.shape[0]} rows."
-                    )
-
-            if expected_start is None:
-                expected_start = start_index
-            else:
-                if start_index != expected_start:
-                    raise ValueError(
-                        f"Non-consecutive file sequence: expected start index {expected_start}, "
-                        f"but got {start_index} in file {path}."
-                    )
-            expected_start = start_index + count
-
-        logger.info("Validation of saved embedding files is complete.")
-        return True
+        # Stack all loaded embeddings into one 2D array
+        stacked: np.ndarray = np.vstack(embeddings_list)
+        # Slice the array to return exactly sample_size embeddings if more were loaded.
+        return stacked[:sample_size]

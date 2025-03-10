@@ -10,6 +10,8 @@ port: 7000
 # For saving the encoded vector embeddings
 embedding_dir_path: "data/retrieval/embeddings"
 retrieved_chunk_ids_dir_path: "data/retrieval/chunk_ids"
+shard_size: 100_000_000
+meta_file_name: "meta.json"
 
 # For encoding
 encoding:

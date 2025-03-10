@@ -4,10 +4,12 @@ from .single_vector_retrieval import (
     SentenceTransformerCorpusEncoder,
     SentenceTransformerCorpusIndexer,
 )
+from .chunk_dataset import RetrievedChunkDataset
 
 __all__ = [
     "SentenceTransformerRetriever",
     "SentenceTransformerCorpusRetriever",
     "SentenceTransformerCorpusEncoder",
     "SentenceTransformerCorpusIndexer",
+    "RetrievedChunkDataset",
 ]

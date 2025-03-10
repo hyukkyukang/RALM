@@ -13,7 +13,7 @@ from datasets import Dataset
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
-from src.retrieval.dataloader import StreamingDataLoader
+from src.retrieval.dataloader import StreamingCorpusDataLoader
 from src.utils import AsyncEmbeddingSaver, is_main_process, is_torch_compile_possible
 
 
@@ -69,7 +69,7 @@ class SentenceTransformerCorpusEncoder:
         num_dataloader_workers: int = 4,
     ) -> None:
         # Create a DataLoader that streams data from the dataset.
-        dataloader = StreamingDataLoader(
+        dataloader = StreamingCorpusDataLoader(
             dataset,
             start_idx=data_span_start_idx,
             end_idx=data_span_end_idx,

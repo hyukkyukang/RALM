@@ -4,15 +4,19 @@ import hkkang_utils.misc as misc_utils
 import hydra
 from omegaconf import DictConfig
 
-from src.retrieval import SentenceTransformerIndexer
+from src.retrieval import SentenceTransformerCorpusIndexer
 
 logger = logging.getLogger("Indexing")
 
+
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    indexer = SentenceTransformerIndexer(cfg=cfg.retrieval.indexing, global_cfg=cfg)
+    indexer = SentenceTransformerCorpusIndexer(
+        cfg=cfg.retrieval.indexing, global_cfg=cfg
+    )
     indexer()
     logger.info("Indexing complete.")
+
 
 # Example Usage:
 if __name__ == "__main__":

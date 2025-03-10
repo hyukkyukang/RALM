@@ -36,7 +36,7 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     return result
 
 
-class StreamingDataLoader(torch.utils.data.DataLoader):
+class StreamingCorpusDataLoader(torch.utils.data.DataLoader):
     def __init__(
         self,
         dataset: Dataset,

@@ -15,6 +15,7 @@ from .misc import (
     slack_disable_callback,
     overwrite_config,
     log_if_rank_zero,
+    get_numpy_file_paths_in_dir,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "overwrite_config",
     "get_ip",
     "log_if_rank_zero",
+    "get_numpy_file_paths_in_dir",
 ]
