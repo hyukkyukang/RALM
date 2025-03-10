@@ -32,17 +32,17 @@ services:
                 reservations:
                     devices:
                         - capabilities: [gpu]
-    RETRO-postgres:
-        image: postgres:17.2
-        container_name: RETRO-postgres
-        stdin_open: true
-        tty: true
-        shm_size: '150gb'
-        ports:
-            - "5435:5432"
-        environment:
-            POSTGRES_USER: "postgres"
-            POSTGRES_PASSWORD: "postgres"
-        volumes:
-            - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
-            - /mnt/md0/hkkang/retro/data/postgresql:/var/lib/postgresql/data
+    # RETRO-postgres:
+    #     image: postgres:17.2
+    #     container_name: RETRO-postgres
+    #     stdin_open: true
+    #     tty: true
+    #     shm_size: '150gb'
+    #     ports:
+    #         - "5435:5432"
+    #     environment:
+    #         POSTGRES_USER: "postgres"
+    #         POSTGRES_PASSWORD: "postgres"
+    #     volumes:
+    #         - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+    #         - /mnt/sdd/hkkang/retro/data/postgresql:/var/lib/postgresql/data
