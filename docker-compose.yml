@@ -1,6 +1,6 @@
 services:
     RETRO:
-        shm_size: 48gb
+        shm_size: 24gb
         ulimits:
             memlock: -1
         image: hyukkyukang/retro:latest
