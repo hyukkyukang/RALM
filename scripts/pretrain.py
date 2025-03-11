@@ -42,7 +42,8 @@ logger = logging.getLogger("PL_Trainer")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Changing the precision of the matmul operation to high causes error when torch compile the flex attention
-torch._dynamo.config.cache_size_limit = 1000
+torch.set_float32_matmul_precision("high")
+torch._dynamo.config.cache_size_limit = 10000
 
 
 def slack_disable_callback() -> bool:
@@ -74,11 +75,6 @@ def get_total_training_steps(
 
 def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
     default_root_dir = os.path.join(cfg.root_dir_path, cfg.log_dir, cfg.tag)
-    # Set the precision to high for the models that support it
-    # When using Flex attention inside the rellama model,
-    # the setting of the precision to high will cause an error
-    if cfg.model.name != "rellama":
-        torch.set_float32_matmul_precision("high")
 
     # Get git hash
     repo = git.Repo(search_parent_directories=True)
