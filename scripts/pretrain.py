@@ -245,7 +245,7 @@ def main(cfg: DictConfig) -> None:
         user_id_to_mention=slack_user_id,
         replies=slack_notification_replies,
         disable_callback=slack_disable_callback,
-        disable=cfg.is_debug and not cfg.notify_end,
+        disable=cfg.is_debug or not cfg.notify_end,
     ):
         evaluation_metrics: Dict[str, Union[int, float]] = run_pretraining(cfg)
 

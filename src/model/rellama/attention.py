@@ -1,26 +1,25 @@
-import logging
 import functools
+import logging
 from typing import *
 
 import torch
 import torch._dynamo
 from omegaconf import DictConfig
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-from transformers.models.llama.modeling_llama import (
-    ALL_ATTENTION_FUNCTIONS,
-    Cache,
-    FlashAttentionKwargs,
-    apply_rotary_pos_emb,
-    eager_attention_forward,
-)
+from transformers.models.llama.modeling_llama import (ALL_ATTENTION_FUNCTIONS,
+                                                      Cache,
+                                                      FlashAttentionKwargs,
+                                                      apply_rotary_pos_emb,
+                                                      eager_attention_forward)
 
-# from src.utils import is_torch_compile_possible
-# if is_torch_compile_possible():
-#     # flex_attention = torch.compile(flex_attention, dynamic=False, mode="max-autotune")
-#     flex_attention = torch.compile(flex_attention, dynamic=False)
+from src.model.rellama.mask import (FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE,
+                                    generate_causal_retrieval_mask_mod)
+from src.utils import is_torch_compile_possible
 
 logger = logging.getLogger("ReLlamaAttention")
 
+if is_torch_compile_possible():
+    flex_attention = torch.compile(flex_attention)
 
 class ReLlamaAttention(torch.nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
@@ -82,91 +81,30 @@ class ReLlamaAttention(torch.nn.Module):
         return attention_interface
 
     @functools.lru_cache(maxsize=None)
-    def get_document_ids(
-        self,
-        input_length: int,
-        input_chunk_size: int,
-        retrieval_block_size: int,
-        retrieval_block_num: int,
-    ) -> torch.Tensor:
-        input_start_idx = retrieval_block_num * retrieval_block_size
-
-        # Initialize the document id
-        all_input_len = input_length + retrieval_block_size * retrieval_block_num
-        document_ids = torch.zeros(all_input_len, dtype=torch.int32, device=self.device)
-
-        # Remove connection between retrieval chunk and input chunk, by setting the input chunk id to be -1
-        document_ids[input_start_idx:] = -1
-
-        # Set the id for each retrieval blocks (begin from id 1, from the first retrieval chunk)
-        for i in range(retrieval_block_num):
-            block_id = i + 1
-            start_idx = retrieval_block_size * i
-            end_idx = retrieval_block_size * (i + 1)
-            document_ids[start_idx:end_idx] = block_id
-
-        # Set the id for each input chunks (begin from id 1, from the second input chunk)
-        for i in range(1, retrieval_block_num + 1):
-            block_id = i
-            start_idx = input_start_idx + input_chunk_size * i
-            # Handle case where there are less retrieval blocks
-            if i == retrieval_block_num:
-                end_idx = all_input_len
-            else:
-                end_idx = input_start_idx + input_chunk_size * (i + 1)
-            document_ids[start_idx:end_idx] = block_id
-
-        return document_ids
-
-    @functools.lru_cache(maxsize=None)
     def get_causal_retrieval_block_mask(
         self,
         input_length: int,
         retrieval_block_num: int,
         kv_with_retrieval_length: Optional[int] = None,
     ) -> Callable:
-        # Configs
-        Q_LEN = input_length
-        KV_LEN = kv_with_retrieval_length
-        INPUT_START_IDX = retrieval_block_num * self.config.retrieval_block_size
 
-        document_ids = self.get_document_ids(
+        # Create the mask mod
+        causal_retrieval_mask_mod = generate_causal_retrieval_mask_mod(
             input_length=input_length,
+            retrieval_block_num=retrieval_block_num,
             input_chunk_size=self.config.input_chunk_size,
             retrieval_block_size=self.config.retrieval_block_size,
-            retrieval_block_num=retrieval_block_num,
+            device=self.device,
         )
 
-        def causal_retrieval_mask_mod(b, h, q_idx, kv_idx):
-            # Basic causal mask
-            causal_mask = (q_idx + INPUT_START_IDX) >= kv_idx
-            # Remove the input chunk to retrieval chunk connection
-            causal_mask = torch.where(
-                kv_idx <= INPUT_START_IDX,
-                False,
-                # torch.zeros_like(causal_mask, dtype=torch.bool),
-                causal_mask,
-            )
-            # Additional document mask
-            document_mask = (
-                document_ids[q_idx + INPUT_START_IDX] == document_ids[kv_idx]
-            )
-            # Remove input chunk to input chunk connection (should only handle in causal mask)
-            document_mask = torch.where(
-                kv_idx >= INPUT_START_IDX,
-                False,
-                # torch.zeros_like(document_mask, dtype=torch.bool),
-                document_mask,
-            )
-            return causal_mask | document_mask
-
+        # Create the block mask using the mask mod
         block_mask = create_block_mask(
             causal_retrieval_mask_mod,
             1,
             1,
-            Q_LEN,
-            KV_LEN,
-            device=document_ids.device,
+            input_length,
+            kv_with_retrieval_length,
+            device=self.device,
         )
 
         return block_mask
@@ -230,37 +168,31 @@ class ReLlamaAttention(torch.nn.Module):
             retrieval_block_num = (
                 retrieval_key_states.shape[2] // self.config.retrieval_block_size
             )
-            causal_retrieval_block_mask = self.get_causal_retrieval_block_mask(
-                input_length=input_length,
-                retrieval_block_num=retrieval_block_num,
-                kv_with_retrieval_length=key_states.shape[2],
-            )
-            # Conduct flex attention
-            attn_output = custom_flex_attention(
+            attn_output, attn_weights = self.safe_flex_attention(
+                input_length,
+                retrieval_block_num,
                 query_states,
                 key_states,
                 value_states,
-                block_mask=causal_retrieval_block_mask,
-                scale=self.scaling,
-                enable_gqa=True,
-                return_lse=output_attentions,
             )
-            attn_weights = None
         else:
-            attention_interface: Callable = self.get_attention_interface(
-                output_attentions=kwargs.get("output_attentions", False)
-            )
-            attn_output, attn_weights = attention_interface(
-                self,
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                dropout=0.0 if not self.training else self.attention_dropout,
-                scaling=self.scaling,
-                is_causal=True,
-                **kwargs,
-            )
+            import hkkang_utils.time as time_utils
+
+            with time_utils.Timer("NormalAttention").measure(True):
+                attention_interface: Callable = self.get_attention_interface(
+                    output_attentions=kwargs.get("output_attentions", False)
+                )
+                attn_output, attn_weights = attention_interface(
+                    self,
+                    query_states,
+                    key_states,
+                    value_states,
+                    attention_mask,
+                    dropout=0.0 if not self.training else self.attention_dropout,
+                    scaling=self.scaling,
+                    is_causal=True,
+                    **kwargs,
+                )
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
@@ -278,23 +210,41 @@ class ReLlamaAttention(torch.nn.Module):
             retrieval_key_states is not None
             and input_length > self.config.input_chunk_size
         )
+        
+    def safe_flex_attention(self, input_length, retrieval_block_num, query_states, key_states, value_states):
+        # Check if the input length is greater than FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
+        need_input_preprocess = is_torch_compile_possible() and input_length < FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
 
+        original_input_length = input_length
+        # Extend the query states to FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
+        if need_input_preprocess:
+            bsize, nhead, seq_len, head_dim = query_states.shape
+            length_diff = FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE - seq_len
+            tensor_to_extend = torch.zeros(bsize, nhead, length_diff, head_dim, device=query_states.device, dtype=query_states.dtype)
+            query_states = torch.cat([query_states, tensor_to_extend], dim=2)
+            input_length = FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
 
-def custom_flex_attention(
-    query_states,
-    key_states,
-    value_states,
-    block_mask,
-    scale,
-    enable_gqa,
-    return_lse,
-):
-    return flex_attention(
-        query_states,
-        key_states,
-        value_states.float(),
-        block_mask=block_mask,
-        scale=scale,
-        enable_gqa=enable_gqa,
-        return_lse=return_lse,
-    )
+        # Get the causal retrieval block mask
+        causal_retrieval_block_mask = self.get_causal_retrieval_block_mask(
+                input_length=input_length,
+                retrieval_block_num=retrieval_block_num,
+                kv_with_retrieval_length=key_states.shape[2],
+        )
+
+        # Conduct flex attention
+        import hkkang_utils.time as time_utils
+        with time_utils.Timer("FlexAttention").measure(True):
+            attn_output = flex_attention(
+                query_states,
+                key_states,
+                value_states.float(),
+                block_mask=causal_retrieval_block_mask,
+                scale=self.scaling,
+                enable_gqa=True,
+            )
+            
+        # Cut-off the extended input length
+        if need_input_preprocess:
+            attn_output = attn_output[:, :, :original_input_length, :]
+        
+        return attn_output, None

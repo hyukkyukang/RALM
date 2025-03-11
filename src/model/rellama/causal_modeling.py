@@ -1,14 +1,13 @@
 from typing import *
 
+import hkkang_utils.time as time_utils
 import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import GenerationMixin
-from transformers.models.llama.modeling_llama import (
-    KwargsForCausalLM,
-    LlamaModel,
-    LlamaPreTrainedModel,
-)
+from transformers.models.llama.modeling_llama import (KwargsForCausalLM,
+                                                      LlamaModel,
+                                                      LlamaPreTrainedModel)
 
 from src.model.rellama.model import ReLlama
 from src.model.utils import initialize_weights
@@ -135,9 +134,10 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
         # Create retrieval key values if there is retrieval data and key values are not provided
         if has_retrieval_data and retrieval_key_values is None:
-            with torch.no_grad():
-                max_retrieval_block_num = max(num_retrieval_blocks)
-                block_num, chunk_num, chunk_len = retrieved_input_ids.shape
+            with time_utils.Timer("EncodeRetrieval").measure(True):
+                with torch.no_grad():
+                    max_retrieval_block_num = max(num_retrieval_blocks)
+                    block_num, chunk_num, chunk_len = retrieved_input_ids.shape
                 # We consider block_num * chunk_num as the batch size when we encode the retrieved data
                 retrieved_input_ids = retrieved_input_ids.view(
                     block_num * chunk_num, chunk_len
@@ -214,22 +214,23 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
                     value_vecs = torch.stack(value_tmp, dim=0)
                     retrieval_key_values.append((key_vecs, value_vecs))
 
-        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        outputs = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            retrieval_key_values=retrieval_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            cache_position=cache_position,
-            is_retrieval=False,
-            **kwargs,
-        )
+        with time_utils.Timer("EncodeMain").measure(True):
+            # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=inputs_embeds,
+                retrieval_key_values=retrieval_key_values,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                cache_position=cache_position,
+                is_retrieval=False,
+                **kwargs,
+            )
 
         hidden_states = outputs[0]
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
