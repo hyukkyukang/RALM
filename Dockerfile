@@ -1,67 +1,81 @@
-# Multi Stage bulid: cmake
-FROM hyukkyukang/cmake:latest AS cmake
+# Multi-Stage Build: cmake
+FROM hyukkyukang/cmake:3.30.8-ubuntu24.04 AS cmake-stage
 
-# Multi Stage build: Main build
-FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu22.04
-
-# Set timezone
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
-# Install basic packages
-RUN apt update
-RUN apt install gnupg git curl make cmake g++ wget zip vim sudo tmux ninja-build -y
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata
+# Multi-Stage Build: Main
+FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
 
 # Set timezone
-RUN ln -fs /usr/share/zoneinfo/Asia/Seoul /etc/localtime && dpkg-reconfigure -f noninteractive tzdata
+ENV TZ=Asia/Seoul
+RUN apt-get update && apt-get install -y tzdata && \
+    ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone
 
-# Install prerequisites for python3.13
-RUN apt install build-essential checkinstall libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev -y 
-# Install python3.13
-RUN apt install software-properties-common -y
-RUN add-apt-repository ppa:deadsnakes/ppa -y
-RUN apt update
-RUN apt install python3.13 python3.13-dev -y
-RUN apt-get -y install python3-pip python-is-python3 python3.13-venv
-RUN echo "export PYTHONPATH=./" >> ~/.bashrc
-RUN echo "export CONFIGPATH=./config.yml" >> ~/.bashrc
-#RUN echo "export SETUPTOOLS_USE_DISTUTILS=stdlib" >> ~/.bashrc
-# Set default python version to 3.12
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.13 1
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
+# Install core utilities
+RUN apt-get update && apt-get install -y \
+    gnupg git curl wget zip vim sudo tmux && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Upgrade setuptools and pip
-RUN python -m ensurepip --upgrade
-RUN python3.13 -m pip install --upgrade setuptools
-RUN pip install --upgrade pip
+# Install build tools
+RUN apt-get update && apt-get install -y \
+    make ninja-build g++ build-essential checkinstall && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install prerequisites for faiss-gpu
-RUN apt-get install swig libblas-dev liblapack-dev libatlas-base-dev -y
+# Install dependencies for building Python 3.13
+RUN apt-get update && apt-get install -y \
+    libssl-dev libsqlite3-dev libncursesw5-dev tk-dev \
+    libgdbm-dev libc6-dev libbz2-dev libreadline-dev libffi-dev \
+    liblzma-dev libgdm-dev zlib1g-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Locale
-RUN apt-get install language-pack-en -y
+# Build Python 3.13 from source
+WORKDIR /usr/src
+RUN curl -O https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz && \
+    tar -xvf Python-3.13.2.tgz && \
+    cd Python-3.13.2 && \
+    ./configure --enable-optimizations && \
+    make -j$(nproc) && make altinstall && \
+    cd .. && rm -rf Python-3.13.2 Python-3.13.2.tgz
 
-# Install numpy
+# Set default Python version
+RUN update-alternatives --install /usr/bin/python python /usr/local/bin/python3.13 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.13 1
+
+# Upgrade pip and setuptools
+RUN python3.13 -m ensurepip && \
+    python3.13 -m pip install --upgrade pip setuptools
+
+# Install scientific computing dependencies
+RUN apt-get update && apt-get install -y \
+    swig libblas-dev liblapack-dev libatlas-base-dev libgflags-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install system locale
+RUN apt-get update && apt-get install -y language-pack-en && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install NumPy
 RUN pip install numpy
 
-RUN apt-get install -y libgflags-dev
+# Copy installed the CMake binary
+COPY --from=cmake-stage /usr/local/bin/cmake /usr/local/bin/cmake
+COPY --from=cmake-stage /usr/local/share/cmake-3.30 /usr/local/share/cmake-3.30
 
-# Install cmake
-#RUN wget https://github.com/Kitware/CMake/releases/download/v3.27.3/cmake-3.27.3.tar.gz && tar -zxvf cmake-3.27.3.tar.gz && cd cmake-3.27.3 && ./bootstrap && make && make install && cd .. && rm -r cmake-3.27.3.tar.gz cmake-3.27.3
-
-# Copy from cmake build
-COPY --from=cmake /cmake-3.27.3 /cmake-3.27.3
-RUN cd /cmake-3.27.3 && make install && rm -r /cmake-3.27.3
+# Verify that CMake is correctly installed
+RUN cmake --version
 
 # Install faiss-gpu
-RUN git clone https://github.com/facebookresearch/faiss.git
-RUN cd faiss && cmake -B build . && make -C build -j faiss && make -C build -j swigfaiss && cd build/faiss/python && python setup.py install && cd ../../.. && rm -r faiss
+RUN git clone https://github.com/facebookresearch/faiss.git && \
+    cd faiss && \
+    cmake -B build . && make -C build -j faiss && \
+    make -C build -j swigfaiss && \
+    cd build/faiss/python && python setup.py install && \
+    cd ../../.. && rm -rf faiss
 
 # Export environment variables
-RUN echo "export PATH=${PATH}:/usr/local/cuda/bin" >> /etc/environment
-RUN echo "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/cuda/lib64" >> /etc/environment
-RUN echo "export CUDA_HOME=/usr/local/cuda" >> /etc/environment
+ENV PATH="${PATH}:/usr/local/cuda/bin"
+ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/cuda/lib64"
+ENV CUDA_HOME=/usr/local/cuda
+ENV PYTHONPATH=./
 
-# Change directory permission
-RUN chmod 777 /root
-RUN echo "root:root" | chpasswd
+# Fix permissions
+RUN chmod 777 /root && echo "root:root" | chpasswd

@@ -2,7 +2,7 @@
 FROM hyukkyukang/cmake:3.30.8-ubuntu24.04 AS cmake-stage
 
 # Multi-Stage Build: Main
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Set timezone
 ENV TZ=Asia/Seoul
