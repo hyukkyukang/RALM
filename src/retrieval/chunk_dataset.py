@@ -12,6 +12,7 @@ from omegaconf import DictConfig
 
 from src.retrieval.utils import (
     convert_global_chunk_id_to_passage_id_and_local_chunk_range,
+    convert_passage_id_to_global_chunk_ids,
     validate_saved_numpy_files,
 )
 from src.tokenization import ReLlamaTokenizer
@@ -47,27 +48,18 @@ class RetrievedChunkDataset(Dataset):
             start, stop, step = idx.indices(len(self))
             return [self[i] for i in range(start, stop, step)]
 
-        # Find the shard that contains the item at index idx.
-        shard_idx = idx // self.cfg.shard_size
-        shard_idx = min(shard_idx, len(self.data) - 1)
-        shard = self.data[shard_idx]
-        local_idx = idx % self.cfg.shard_size
-        # Get the chunk ids for the item at index idx.
-        chunk_ids: List[int] = shard[local_idx]["chunk_ids"]
-        chunk_id = chunk_ids[0]
-        # Convert the chunk ids to global chunk ids.
-        passage_id, local_chunk_start_idx, local_chunk_end_idx = (
-            convert_global_chunk_id_to_passage_id_and_local_chunk_range(
-                chunk_id,
-                self.num_chunks_per_passage,
-                self.global_cfg.model.input_chunk_size,
-            )
+        passage_idx = idx
+        retrieved_input_ids: List[List[List[int]]] = (
+            self.get_retrieved_input_ids_by_passage_id(passage_idx)
         )
-        # Get the actual token ids for the retrieved chunk ids
-        chunk_token_ids: List[int] = self.corpus[passage_id]["input_ids"][
-            local_chunk_start_idx:local_chunk_end_idx
-        ]
-        return chunk_token_ids
+        return retrieved_input_ids
+
+    @property
+    def num_chunks_to_use_per_idx(self) -> int:
+        return (
+            self.global_cfg.model.retrieval_block_size
+            // self.global_cfg.model.input_chunk_size
+        )
 
     @property
     def num_chunks_per_passage(self) -> int:
@@ -222,3 +214,65 @@ class RetrievedChunkDataset(Dataset):
             json.dump(meta_data, f, indent=4)
 
         return None
+
+    def get_chunk_token_ids_by_global_chunk_id(self, global_chunk_id: int) -> List[int]:
+        """
+        Get the chunk token ids by the global chunk id.
+        """
+        # Convert the chunk ids to global chunk ids.
+        passage_id, local_chunk_start_idx, local_chunk_end_idx = (
+            convert_global_chunk_id_to_passage_id_and_local_chunk_range(
+                global_chunk_id,
+                self.num_chunks_per_passage,
+                self.global_cfg.model.input_chunk_size,
+            )
+        )
+        # Get the actual token ids for the retrieved chunk ids
+        chunk_token_ids: List[int] = self.corpus[passage_id]["input_ids"][
+            local_chunk_start_idx:local_chunk_end_idx
+        ]
+        return chunk_token_ids
+
+    def get_retrieved_input_ids_by_global_chunk_id(
+        self, global_chunk_id: int
+    ) -> List[int]:
+        """
+        Get the retrieved input ids for the given global chunk id.
+        """
+        shard_idx = global_chunk_id // self.cfg.shard_size
+        shard_idx = min(shard_idx, len(self.data) - 1)
+        shard = self.data[shard_idx]
+        local_idx = global_chunk_id % self.cfg.shard_size
+        # Get the retrieved chunk ids for the item at index idx.
+        chunk_ids: List[int] = shard[local_idx]["chunk_ids"][
+            : self.num_chunks_to_use_per_idx
+        ]
+        # Get the actual token ids for the retrieved chunk ids
+        chunk_token_ids: List[List[int]] = []
+        for idx, chunk_id in enumerate(chunk_ids):
+            if chunk_id == -1:
+                # Check remaining chunk ids are all -1
+                assert all(
+                    chunk_id == -1 for chunk_id in chunk_ids[idx:]
+                ), "Chunk ids are not properly formatted."
+                break
+            chunk_token_ids.append(
+                self.get_chunk_token_ids_by_global_chunk_id(chunk_id)
+            )
+        return chunk_token_ids
+
+    def get_retrieved_input_ids_by_passage_id(self, passage_id: int) -> List[List[int]]:
+        """
+        Get the retrieved input ids for the given passage id.
+        """
+        global_chunk_ids: List[int] = convert_passage_id_to_global_chunk_ids(
+            passage_id, self.num_chunks_per_passage
+        )
+        retrieved_input_ids: List[List[List[int]]] = []
+        for global_chunk_id in global_chunk_ids:
+            tmp = self.get_retrieved_input_ids_by_global_chunk_id(global_chunk_id)
+            if len(tmp) > 0:
+                retrieved_input_ids.append(tmp)
+        # Remove the last item as it cannot be used as a context
+        retrieved_input_ids = retrieved_input_ids[:-1]
+        return retrieved_input_ids

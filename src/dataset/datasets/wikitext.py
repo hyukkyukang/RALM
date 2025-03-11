@@ -129,20 +129,33 @@ class WikiTextDataCollator:
 
         # Collate the retrieved chunk token ids
         if "retrieved_chunk_token_ids" in examples[0]:
-            retrieved_chunk_token_ids = torch.tensor(
-                [example["retrieved_chunk_token_ids"] for example in examples],
+            flatten_retrieved_input_ids = [
+                item
+                for example in examples
+                for item in example["retrieved_chunk_token_ids"]
+            ]
+            retrieved_input_ids = torch.tensor(
+                flatten_retrieved_input_ids,
                 dtype=torch.long,
                 device="cpu",
             )
         else:
-            retrieved_chunk_token_ids = None
+            retrieved_input_ids = None
+
+        if "num_retrieval_blocks" in examples[0]:
+            num_retrieval_blocks = [
+                example["num_retrieval_blocks"] for example in examples
+            ]
+        else:
+            num_retrieval_blocks = None
 
         # Update batch with computed values
         batch.update(
             {
                 "total_chars_cnt": total_chars_cnt,
                 # TODO: Implement this for self.is_use_retrieval==True
-                "retrieved_chunk_token_ids": retrieved_chunk_token_ids,
+                "retrieved_input_ids": retrieved_input_ids,
+                "num_retrieval_blocks": num_retrieval_blocks,
             }
         )
 

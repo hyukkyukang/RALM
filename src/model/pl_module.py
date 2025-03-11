@@ -13,13 +13,19 @@ from transformers.optimization import Adafactor
 
 from src.evaluation.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.next_token_prediction import (
-    compute_perplexity_and_bpb, evaluate_next_token_prediction)
+    compute_perplexity_and_bpb,
+    evaluate_next_token_prediction,
+)
 from src.model.llama.causal_modeling import LlamaForCausalLM
 from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import (add_to_tensor_dict_safely, get_compile_decorator,
-                             lr_lambda_cosine_decay, lr_lambda_linear_decay)
+from src.model.utils import (
+    add_to_tensor_dict_safely,
+    get_compile_decorator,
+    lr_lambda_cosine_decay,
+    lr_lambda_linear_decay,
+)
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.registry import TOKENIZER_REGISTRY
 from src.utils import is_torch_compile_possible, log_if_rank_zero
@@ -91,9 +97,7 @@ class LightningModule(L.LightningModule):
                     "Compiling the model with torch compile...",
                 )
                 mode = None if self.cfg.model.name == "rellama" else "max-autotune"
-                causal_model = torch.compile(
-                    causal_model, dynamic=True, mode=mode
-                )
+                causal_model = torch.compile(causal_model, dynamic=True, mode=mode)
             else:
                 log_if_rank_zero(
                     logger,
@@ -114,7 +118,8 @@ class LightningModule(L.LightningModule):
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        retrieved_chunk_ids: Optional[torch.Tensor] = None,
+        retrieved_input_ids: Optional[torch.Tensor] = None,
+        num_retrieval_blocks: Optional[List[int]] = None,
         labels: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         **kwargs,
@@ -127,7 +132,8 @@ class LightningModule(L.LightningModule):
                     attention_mask=attention_mask,
                     labels=labels,
                     use_cache=use_cache,
-                    retrieved_chunk_ids=retrieved_chunk_ids,
+                    retrieved_input_ids=retrieved_input_ids,
+                    num_retrieval_blocks=num_retrieval_blocks,
                     **kwargs,
                 )
         return self.model(
@@ -135,7 +141,8 @@ class LightningModule(L.LightningModule):
             attention_mask=attention_mask,
             labels=labels,
             use_cache=use_cache,
-            retrieved_chunk_ids=retrieved_chunk_ids,
+            retrieved_input_ids=retrieved_input_ids,
+            num_retrieval_blocks=num_retrieval_blocks,
             **kwargs,
         )
 
@@ -149,7 +156,8 @@ class LightningModule(L.LightningModule):
         self.compiled_step(
             batch["input_ids"],
             batch["attention_mask"],
-            batch["retrieved_chunk_ids"],
+            batch["retrieved_input_ids"],
+            batch["num_retrieval_blocks"],
             batch["labels"],
             batch["avg_char_per_token"],
         )
@@ -384,14 +392,16 @@ class LightningModule(L.LightningModule):
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        retrieved_chunk_ids: Optional[torch.Tensor] = None,
+        retrieved_input_ids: Optional[torch.Tensor] = None,
+        num_retrieval_blocks: Optional[List[int]] = None,
         labels: Optional[torch.Tensor] = None,
         avg_char_per_token: float = 0.0,
     ) -> None:
         outputs = self(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            retrieved_chunk_ids=retrieved_chunk_ids,
+            retrieved_input_ids=retrieved_input_ids,
+            num_retrieval_blocks=num_retrieval_blocks,
             labels=labels,
             use_cache=False,
         )
@@ -429,12 +439,22 @@ class LightningModule(L.LightningModule):
         bsize = len(batch["input_ids"])
         is_correct_list: List[bool] = []
         # last_word_prediction expects no padding
+        cnt = 0
         for b_idx in range(bsize):
             batch_token_ids = batch["input_ids"][b_idx].unsqueeze(0)
             target_last_words = batch["last_word"][b_idx : b_idx + 1]
-            retrieved_chunk_ids = (
-                None if batch["retrieved_chunk_ids"] is None else batch["retrieved_chunk_ids"][b_idx].unsqueeze(0)
+            num_retrieval_blocks = (
+                None
+                if batch["num_retrieval_blocks"] is None
+                else batch["num_retrieval_blocks"][b_idx : b_idx + 1]
             )
+            retrieved_input_ids = (
+                None
+                if batch["retrieved_input_ids"] is None
+                else batch["retrieved_input_ids"][cnt : cnt + num_retrieval_blocks[0]]
+            )
+            if retrieved_input_ids is not None:
+                cnt += num_retrieval_blocks[0]
 
             # Evaluate the last word prediction
             is_correct_list.extend(
@@ -443,7 +463,8 @@ class LightningModule(L.LightningModule):
                     target_last_words=target_last_words,
                     tokenizer=self.tokenizer,
                     model=self.uncompiled_model,
-                    retrieved_chunk_ids=retrieved_chunk_ids,
+                    retrieved_input_ids=retrieved_input_ids,
+                    num_retrieval_blocks=num_retrieval_blocks,
                 )
             )
         return sum(is_correct_list) / bsize
@@ -458,6 +479,7 @@ class LightningModule(L.LightningModule):
             attention_mask=batch["attention_mask"],
             labels=batch["labels"],
             model=self.uncompiled_model,
-            retrieved_chunk_ids=batch["retrieved_chunk_ids"],
+            retrieved_input_ids=batch["retrieved_input_ids"],
+            num_retrieval_blocks=batch["num_retrieval_blocks"],
         )
         return loss_sum, valid_tokens_cnt

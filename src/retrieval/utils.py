@@ -131,3 +131,14 @@ def convert_global_chunk_id_to_local_chunk_id(
     Convert a global chunk ID to the corresponding local chunk ID.
     """
     return global_chunk_id % num_chunks_per_passage
+
+
+def convert_passage_id_to_global_chunk_ids(
+    passage_id: int, num_chunks_per_passage: int
+) -> List[int]:
+    """
+    Convert a passage ID to the corresponding global chunk IDs.
+    """
+    return [
+        passage_id * num_chunks_per_passage + i for i in range(num_chunks_per_passage)
+    ]

@@ -49,9 +49,15 @@ class BaseDataset:
 
         if self.is_use_retrieval:
             # Get the retrieved data
-            retrievd_chunk_token_ids: List[int] = self.retrieved_chunk_dataset[idx]
+            # Shape: (num_chunks_in_this_passage, num_retrieved_chunk_per_passage, token_len_per_chunk)
+            retrievd_chunk_token_ids: List[List[List[int]]] = (
+                self.retrieved_chunk_dataset[idx]
+            )
             processed_data.update(
-                {"retrieved_chunk_token_ids": retrievd_chunk_token_ids}
+                {
+                    "retrieved_chunk_token_ids": retrievd_chunk_token_ids,
+                    "num_retrieval_blocks": len(retrievd_chunk_token_ids),
+                }
             )
         return processed_data
 
@@ -192,11 +198,11 @@ class BaseDataset:
             - 1
         )
         dummy_chunk_ids: List[List[int]] = [
-            list(range(0, self.global_cfg.model.retrieval_chunk_size))
+            list(range(0, self.global_cfg.model.retrieval_block_size))
         ] * num_of_chunks
         self.retrieved_data = Dataset.from_dict(
             {
-                "retrieved_chunk_ids": [
+                "retrieved_input_ids": [
                     dummy_chunk_ids
                     for _ in tqdm.tqdm(
                         range(len(self.post_processed_data)),
