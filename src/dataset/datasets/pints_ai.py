@@ -14,11 +14,11 @@ from transformers import DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import count_avg_chars_per_token_in_batch
-from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 from src.utils import is_main_process, log_if_rank_zero
 
 logger = logging.getLogger("PintsAIDataset")
+
 
 class PintsAIDataset(BaseDataset):
     def __init__(
@@ -28,10 +28,14 @@ class PintsAIDataset(BaseDataset):
         tokenizer: ReLlamaTokenizer,
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
-        retriever: Optional[Retriever] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
+        super().__init__(
+            cfg,
+            global_cfg,
+            tokenizer,
+            tokenized_data,
+            post_processed_data,
+        )
 
     @cached_property
     def collator(self) -> "PintsAIDataCollator":
@@ -62,10 +66,10 @@ class PintsAIDataset(BaseDataset):
           - Appending an EOS token to each example.
           - Concatenating tokens across examples.
           - Splitting the long stream of tokens into fixed-size chunks.
-        
+
         To keep memory usage low and allow resuming after interruption,
         complete segments are flushed to disk along with a checkpoint file.
-        
+
         After processing, all temporary datasets are loaded, concatenated,
         and the final dataset is saved to a temporary final directory.
         Only after a successful save are the temporary shards and checkpoint
@@ -85,8 +89,9 @@ class PintsAIDataset(BaseDataset):
             flush_counter = checkpoint.get("flush_counter", 0)
             all_new_token_ids = checkpoint.get("all_new_token_ids", [])
             tmp_token_ids = checkpoint.get("tmp_token_ids", [])
-            log_if_rank_zero(logger, 
-                f"Resuming from checkpoint: processed_idx={processed_idx}, flush_counter={flush_counter}"
+            log_if_rank_zero(
+                logger,
+                f"Resuming from checkpoint: processed_idx={processed_idx}, flush_counter={flush_counter}",
             )
         else:
             processed_idx = 0
@@ -111,7 +116,11 @@ class PintsAIDataset(BaseDataset):
                 json.dump(checkpoint_data, f)
 
         # Process examples; skip those already processed.
-        for idx in tqdm.tqdm(range(processed_idx, len(dataset)), desc="Segmenting data", disable=not is_main_process()):
+        for idx in tqdm.tqdm(
+            range(processed_idx, len(dataset)),
+            desc="Segmenting data",
+            disable=not is_main_process(),
+        ):
             example = dataset[idx]
 
             # Append EOS token
@@ -177,9 +186,15 @@ class PintsAIDataset(BaseDataset):
             final_dataset = concatenate_datasets(temp_datasets)
 
         # First, save the final dataset to a temporary final directory.
-        log_if_rank_zero(logger, f"Saving final dataset to temporary path {self.post_process_cache_path}")
+        log_if_rank_zero(
+            logger,
+            f"Saving final dataset to temporary path {self.post_process_cache_path}",
+        )
         final_dataset.save_to_disk(self.post_process_cache_path)
-        log_if_rank_zero(logger, f"Final dataset successfully saved to {self.post_process_cache_path}")
+        log_if_rank_zero(
+            logger,
+            f"Final dataset successfully saved to {self.post_process_cache_path}",
+        )
 
         # Now cleanup: remove the checkpoint file and temporary shards.
         if os.path.exists(checkpoint_path):
@@ -244,6 +259,28 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
             return_total_valid_tokens=True,
         )
 
+        # Collate the retrieved chunk token ids
+        if "retrieved_chunk_token_ids" in examples[0]:
+            flatten_retrieved_input_ids = [
+                item
+                for example in examples
+                for item in example["retrieved_chunk_token_ids"]
+            ]
+            retrieved_input_ids = torch.tensor(
+                flatten_retrieved_input_ids,
+                dtype=torch.long,
+                device="cpu",
+            )
+        else:
+            retrieved_input_ids = None
+
+        if "num_retrieval_blocks" in examples[0]:
+            num_retrieval_blocks = [
+                example["num_retrieval_blocks"] for example in examples
+            ]
+        else:
+            num_retrieval_blocks = None
+
         # Update batch with computed values
         batch.update(
             {
@@ -252,7 +289,8 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
                     total_valid_tokens_cnt, dtype=torch.int64
                 ),
                 # TODO: Implement this for self.is_use_retrieval==True
-                "retrieved_chunk_ids": None,
+                "retrieved_input_ids": retrieved_input_ids,
+                "num_retrieval_blocks": num_retrieval_blocks,
             }
         )
 

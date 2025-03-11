@@ -1,5 +1,12 @@
 # Retrieval-augmented Language Model
 
+## Retrieval
+
+```bash
+export TORCH_COMPILE_DISABLE=1
+export PYTORCH_DISABLE_GPU_KERNELS=1
+```
+
 ## Install dependencies
 Install torch and legacy-cgi (for Python3.13)
 ```bash

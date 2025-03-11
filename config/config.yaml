@@ -25,6 +25,7 @@ defaults:
     - training: default
     - validation: default
     - testing: default
+    - retrieval: default
 hydra:
   output_subdir: null
   run:

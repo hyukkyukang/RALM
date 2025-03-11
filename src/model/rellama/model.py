@@ -50,7 +50,11 @@ class ReLlamaPreTrainedModel(PreTrainedModel):
 
 
 class ReLlama(ReLlamaPreTrainedModel):
-    def __init__(self, cfg: DictConfig, tokenizer: Optional[ReLlamaTokenizer] = None):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        tokenizer: Optional[ReLlamaTokenizer] = None,
+    ):
         llama_config: LlamaConfig = get_customized_llama_config(cfg, tokenizer)
         super().__init__(llama_config)
         self.padding_idx = llama_config.pad_token_id
@@ -259,7 +263,6 @@ class ReLlama(ReLlamaPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        # TODO: Check if way of adding type embeddings is efficient and gradient friendly
         # Add Type embeddings - efficiently get 0th embedding
         input_type_embeds = self.input_type_embeddings.weight[
             int(is_retrieval)
@@ -378,7 +381,7 @@ def get_customized_llama_config(
     llama_config.torch_dtype = torch.float32
     # Related to the retrival chunks
     llama_config.input_chunk_size = cfg.model.input_chunk_size
-    llama_config.retrieval_chunk_size = cfg.model.retrieval_chunk_size
+    llama_config.retrieval_block_size = cfg.model.retrieval_block_size
     assert (
         llama_config.max_position_embeddings % llama_config.input_chunk_size == 0
     ), "max_position_embeddings must be divisible by input_chunk_size"

@@ -10,7 +10,6 @@ from transformers import AutoTokenizer
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import perform_sliding_window_segmentation
-from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.utils import INVALID_TOKEN_ID
 from src.utils import log_if_rank_zero
@@ -26,10 +25,14 @@ class WikiTextDataset(BaseDataset):
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
-        retriever: Optional[Retriever] = None,
     ):
-        super().__init__(cfg, global_cfg, tokenizer, tokenized_data, post_processed_data, retrieved_data, retriever)
+        super().__init__(
+            cfg,
+            global_cfg,
+            tokenizer,
+            tokenized_data,
+            post_processed_data,
+        )
 
     @cached_property
     def collator(self) -> "WikiTextDataCollator":
@@ -124,12 +127,35 @@ class WikiTextDataCollator:
             # Add to total character count
             total_chars_cnt += len(decoded_text)
 
+        # Collate the retrieved chunk token ids
+        if "retrieved_chunk_token_ids" in examples[0]:
+            flatten_retrieved_input_ids = [
+                item
+                for example in examples
+                for item in example["retrieved_chunk_token_ids"]
+            ]
+            retrieved_input_ids = torch.tensor(
+                flatten_retrieved_input_ids,
+                dtype=torch.long,
+                device="cpu",
+            )
+        else:
+            retrieved_input_ids = None
+
+        if "num_retrieval_blocks" in examples[0]:
+            num_retrieval_blocks = [
+                example["num_retrieval_blocks"] for example in examples
+            ]
+        else:
+            num_retrieval_blocks = None
+
         # Update batch with computed values
         batch.update(
             {
                 "total_chars_cnt": total_chars_cnt,
                 # TODO: Implement this for self.is_use_retrieval==True
-                "retrieved_chunk_ids": None,
+                "retrieved_input_ids": retrieved_input_ids,
+                "num_retrieval_blocks": num_retrieval_blocks,
             }
         )
 

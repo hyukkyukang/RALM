@@ -5,7 +5,7 @@ from typing import *
 import torch
 from tensordict import TensorDict
 
-from src.utils import log_if_rank_zero
+from src.utils import is_torch_compile_possible, log_if_rank_zero
 
 logger = logging.getLogger("ModelUtils")
 
@@ -67,8 +67,7 @@ def get_compile_decorator(
     """Returns torch.compile decorator if GPU is capable and use_compile is True, otherwise returns a no-op decorator"""
     if (
         use_compile
-        and torch.cuda.is_available()
-        and torch.cuda.get_device_capability()[0] >= 7
+        and is_torch_compile_possible()
     ):
         log_if_rank_zero(
             logger, f"Compiling the module with torch compile in {mode} mode..."

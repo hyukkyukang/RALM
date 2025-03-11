@@ -1,6 +1,6 @@
 services:
     RETRO:
-        shm_size: 12gb
+        shm_size: 48gb
         ulimits:
             memlock: -1
         image: hyukkyukang/retro:latest
@@ -14,32 +14,23 @@ services:
         volumes:
             - /etc/timezone:/etc/timezone:ro 
             - ./:/root/RETRO/
-            - /mnt/md0/hkkang:/mnt/md0/hkkang
+            - /mnt/sdc/hkkang:/mnt/md0/hkkang
         working_dir: /root/RETRO
-        command: >
-            sh -c "echo root | su root -c 'groupadd -g ${GID} usergroup || true' &&
-            echo root | su root -c 'useradd -s /bin/bash -m user -u ${UID} -g ${GID}' &&
-            echo root | su root -c 'echo \"user:user\" | chpasswd' &&
-            echo root | su root -c 'echo \"user ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers' &&
-            echo \"export PATH=/home/user/.local/bin:$PATH\" >> /home/user/.bashrc &&
-            echo \"export PYTHONPATH=/root/RETRO/\" >> /home/user/.bashrc &&
-            tail -f /dev/null"
+        command: |
+            sh -c '
+            echo "root" | su root -c "
+            if ! id -u user > /dev/null 2>&1; then
+                groupadd -g ${GID} usergroup || true
+                useradd -s /bin/bash -m user -u ${UID} -g ${GID}
+                echo \"user:user\" | chpasswd
+                echo \"user ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers
+            fi
+            echo \"export PATH=/home/user/.local/bin:\$PATH\" >> /home/user/.bashrc
+            echo \"export PYTHONPATH=/root/RETRO/\" >> /home/user/.bashrc
+            exec tail -f /dev/null
+            "'
         deploy:
             resources:
                 reservations:
                     devices:
                         - capabilities: [gpu]
-    RETRO-postgres:
-        image: postgres:17.2
-        container_name: RETRO-postgres
-        stdin_open: true
-        tty: true
-        shm_size: '150gb'
-        ports:
-            - "5435:5432"
-        environment:
-            POSTGRES_USER: "postgres"
-            POSTGRES_PASSWORD: "postgres"
-        volumes:
-            - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
-            - /mnt/md0/hkkang/retro/data/postgresql:/var/lib/postgresql/data

@@ -11,7 +11,8 @@ def evaluate_next_token_prediction(
     attention_mask: torch.Tensor,
     labels: torch.Tensor,
     model: torch.nn.Module,
-    retrieved_chunk_ids: Optional[torch.Tensor] = None,
+    retrieved_input_ids: Optional[torch.Tensor] = None,
+    num_retrieval_blocks: Optional[int] = None,
 ) -> Tuple[float, int]:
     """
     Evaluate model's next token prediction performance.
@@ -31,7 +32,8 @@ def evaluate_next_token_prediction(
         input_ids=token_ids,
         attention_mask=attention_mask,
         labels=labels,
-        retrieved_chunk_ids=retrieved_chunk_ids,
+        retrieved_input_ids=retrieved_input_ids,
+        num_retrieval_blocks=num_retrieval_blocks,
     )
 
     # Get the loss

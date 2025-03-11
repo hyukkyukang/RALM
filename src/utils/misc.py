@@ -1,16 +1,16 @@
 import logging
+from pathlib import Path
 from typing import *
-import os
+
+import torch
 from omegaconf import DictConfig, open_dict
 from pytorch_lightning.utilities import rank_zero_only
 
+from src.utils.distributed import is_main_process
 
-def is_main_process() -> bool:
-    """Check if the current process is the main process."""
-    # If LOCAL_RANK is set, use it; otherwise, assume a single-process scenario.
-    if "LOCAL_RANK" in os.environ:
-        return int(os.environ["LOCAL_RANK"]) == 0
-    return True
+
+def slack_disable_callback() -> bool:
+    return not is_main_process()
 
 
 @rank_zero_only
@@ -131,3 +131,20 @@ def check_argument(
         if name not in dic and arg_type == bool:
             dic[name] = False
     return True
+
+
+def is_torch_compile_possible() -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7
+
+
+def get_numpy_file_paths_in_dir(dir_path: str) -> List[str]:
+    """
+    Retrieve a list of all .npy file paths under the given directory (recursively).
+
+    Parameters:
+        dir_path (str): The root directory to search for .npy files.
+
+    Returns:
+        List[str]: A list of file paths as strings.
+    """
+    return [str(p) for p in Path(dir_path).glob("**/*.npy")]

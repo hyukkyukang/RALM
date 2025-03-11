@@ -8,7 +8,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.dataset.utils import SingletonBasicTokenizer
 from src.evaluation.utils import STOPWORDS_FROM_GPT2
-from src.utils import log_if_rank_zero
+from src.utils import is_torch_compile_possible, log_if_rank_zero
 
 logger = logging.getLogger("NextWordPrediction")
 
@@ -18,8 +18,7 @@ def is_model_compiled(model: Union[L.LightningModule, AutoModelForCausalLM]) -> 
         if (
             "use_torch_compile" in model.cfg
             and model.cfg.use_torch_compile
-            and torch.cuda.is_available()
-            and torch.cuda.get_device_capability()[0] >= 7
+            and is_torch_compile_possible()
         ):
             assert isinstance(
                 model.model, torch._dynamo.eval_frame.OptimizedModule
@@ -34,12 +33,14 @@ def predict_next_tokens(
     batch_token_ids: torch.Tensor,
     tokenizer: AutoTokenizer,
     model: AutoModelForCausalLM,
-    retrieved_chunk_ids: Optional[torch.Tensor] = None,
+    retrieved_input_ids: Optional[torch.Tensor] = None,
+    num_retrieval_blocks: Optional[int] = None,
     steps_to_predict: int = 6,
     beam_width: int = 128,
 ) -> List[str]:
     """Give continuation of the line with at most max_predictions BPE tokens. Returns line extended with predictions of
     the model."""
+    # Get configs
     bsize = batch_token_ids.size(0)
 
     # List to append the predictions
@@ -48,21 +49,27 @@ def predict_next_tokens(
     # Perform token prediction step by step
     current_input_token_ids = batch_token_ids
     states = None
+    retrieval_key_values = None
     for _ in range(steps_to_predict):
         outputs = model(
             current_input_token_ids,
-            retrieved_chunk_ids=retrieved_chunk_ids,
+            retrieved_input_ids=retrieved_input_ids,
             past_key_values=states,
             use_cache=True,
+            num_retrieval_blocks=num_retrieval_blocks,
+            retrieval_key_values=retrieval_key_values,
         )
+        # Leave the last block of retrieved input ids only
         logits = outputs.logits  # Get logits from the outputs
         # Clone if using torch.compile
         if is_model_compiled(model):
             # states = outputs.past_key_values.clone()  # Get the state from outputs
             states = copy.deepcopy(outputs.past_key_values)
-
         else:
             states = outputs.past_key_values
+
+        # if model.cfg.model.name == "rellama":
+        #     retrieval_key_values = outputs.retrieval_key_values
 
         # Get the top k candidates
         _, line_encoded_candidates = torch.topk(
@@ -99,7 +106,8 @@ def evaluate_last_word_prediction(
     target_last_words: List[str],
     tokenizer: AutoTokenizer,
     model: AutoModelForCausalLM,
-    retrieved_chunk_ids: Optional[torch.Tensor] = None,
+    retrieved_input_ids: Optional[torch.Tensor] = None,
+    num_retrieval_blocks: Optional[List[int]] = None,
     is_analyze: bool = False,
 ) -> List[bool]:
     """batch_token_ids shape: (bsize, seq_len)
@@ -111,7 +119,8 @@ def evaluate_last_word_prediction(
         batch_token_ids=batch_token_ids,
         tokenizer=tokenizer,
         model=model,
-        retrieved_chunk_ids=retrieved_chunk_ids,
+        retrieved_input_ids=retrieved_input_ids,
+        num_retrieval_blocks=num_retrieval_blocks,
     )
     batch_input_contexts: List[str] = [
         tokenizer.decode(token_ids) for token_ids in batch_token_ids
