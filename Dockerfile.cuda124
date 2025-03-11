@@ -6,9 +6,10 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Set timezone
 ENV TZ=Asia/Seoul
-RUN apt-get update && apt-get install -y tzdata && \
-    ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
-    echo $TZ > /etc/timezone
+RUN apt-get update && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata && \
+    dpkg-reconfigure -f noninteractive tzdata
 
 # Install core utilities
 RUN apt-get update && apt-get install -y \
