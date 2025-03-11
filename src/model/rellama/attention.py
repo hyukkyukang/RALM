@@ -108,7 +108,7 @@ class ReLlamaAttention(torch.nn.Module):
         )
 
         return block_mask
-
+    
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -117,10 +117,8 @@ class ReLlamaAttention(torch.nn.Module):
         past_key_value: Optional[Cache] = None,
         retrieval_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        output_attentions: bool = False,
         **kwargs: FlashAttentionKwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        b_size = hidden_states.shape[0]
         input_shape = hidden_states.shape[:-1]
         input_length = hidden_states.shape[1]
         hidden_shape = (*input_shape, -1, self.head_dim)
@@ -176,23 +174,20 @@ class ReLlamaAttention(torch.nn.Module):
                 value_states,
             )
         else:
-            import hkkang_utils.time as time_utils
-
-            with time_utils.Timer("NormalAttention").measure(True):
-                attention_interface: Callable = self.get_attention_interface(
-                    output_attentions=kwargs.get("output_attentions", False)
-                )
-                attn_output, attn_weights = attention_interface(
-                    self,
-                    query_states,
-                    key_states,
-                    value_states,
-                    attention_mask,
-                    dropout=0.0 if not self.training else self.attention_dropout,
-                    scaling=self.scaling,
-                    is_causal=True,
-                    **kwargs,
-                )
+            attention_interface: Callable = self.get_attention_interface(
+                output_attentions=kwargs.get("output_attentions", False)
+            )
+            attn_output, attn_weights = attention_interface(
+                self,
+                query_states,
+                key_states,
+                value_states,
+                attention_mask,
+                dropout=0.0 if not self.training else self.attention_dropout,
+                scaling=self.scaling,
+                is_causal=True,
+                **kwargs,
+            )
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
@@ -232,19 +227,18 @@ class ReLlamaAttention(torch.nn.Module):
         )
 
         # Conduct flex attention
-        import hkkang_utils.time as time_utils
-        with time_utils.Timer("FlexAttention").measure(True):
-            attn_output = flex_attention(
-                query_states,
-                key_states,
-                value_states.float(),
-                block_mask=causal_retrieval_block_mask,
-                scale=self.scaling,
-                enable_gqa=True,
-            )
+        attn_output = flex_attention(
+            query_states,
+            key_states,
+            value_states.float(),
+            block_mask=causal_retrieval_block_mask,
+            scale=self.scaling,
+            enable_gqa=True,
+        )
             
         # Cut-off the extended input length
         if need_input_preprocess:
             attn_output = attn_output[:, :, :original_input_length, :]
         
         return attn_output, None
+    
