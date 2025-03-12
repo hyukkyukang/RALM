@@ -56,10 +56,7 @@ class RetrievedChunkDataset(Dataset):
 
     @property
     def num_chunks_to_use_per_idx(self) -> int:
-        return (
-            self.global_cfg.model.retrieval_block_size
-            // self.global_cfg.model.input_chunk_size
-        )
+        return self.global_cfg.model.retrieval_chunk_num
 
     @property
     def num_chunks_per_passage(self) -> int:

@@ -381,7 +381,9 @@ def get_customized_llama_config(
     llama_config.torch_dtype = torch.float32
     # Related to the retrival chunks
     llama_config.input_chunk_size = cfg.model.input_chunk_size
-    llama_config.retrieval_block_size = cfg.model.retrieval_block_size
+    llama_config.retrieval_chunk_size = cfg.model.retrieval_chunk_size
+    llama_config.retrieval_chunk_num = cfg.model.retrieval_chunk_num
+    llama_config.retrieval_block_size = cfg.model.retrieval_chunk_size * cfg.model.retrieval_chunk_num
     assert (
         llama_config.max_position_embeddings % llama_config.input_chunk_size == 0
     ), "max_position_embeddings must be divisible by input_chunk_size"

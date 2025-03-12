@@ -63,6 +63,10 @@ class ReLlamaAttention(torch.nn.Module):
     def device(self) -> torch.device:
         return next(self.q_proj.parameters()).device
 
+    @functools.cached_property
+    def retrieval_block_size(self) -> int:
+        return self.config.retrieval_chunk_size * self.config.retrieval_chunk_num
+
     @functools.lru_cache(maxsize=None)
     def get_attention_interface(self, output_attentions: bool = False) -> Callable:
         attention_interface: Callable = eager_attention_forward
@@ -93,7 +97,7 @@ class ReLlamaAttention(torch.nn.Module):
             input_length=input_length,
             retrieval_block_num=retrieval_block_num,
             input_chunk_size=self.config.input_chunk_size,
-            retrieval_block_size=self.config.retrieval_block_size,
+            retrieval_block_size=self.retrieval_block_size,
             device=self.device,
         )
 
@@ -164,7 +168,7 @@ class ReLlamaAttention(torch.nn.Module):
         # Conduct flex attention if there is retrieval data
         if self.use_flex_attention(input_length, retrieval_key_states):
             retrieval_block_num = (
-                retrieval_key_states.shape[2] // self.config.retrieval_block_size
+                retrieval_key_states.shape[2] // self.retrieval_block_size
             )
             attn_output, attn_weights = self.safe_flex_attention(
                 input_length,

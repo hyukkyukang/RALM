@@ -6,9 +6,9 @@ import hkkang_utils.misc as misc_utils
 import hkkang_utils.time as time_utils
 import torch
 import torch.nn.functional as F
-from flash_attn import flash_attn_func
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-from transformers.modeling_flash_attention_utils import _flash_attention_forward
+from transformers.modeling_flash_attention_utils import \
+    _flash_attention_forward
 
 logger = logging.getLogger("ATTENTION")
 
