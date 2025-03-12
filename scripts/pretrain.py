@@ -42,7 +42,6 @@ logger = logging.getLogger("PL_Trainer")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Changing the precision of the matmul operation to high causes error when torch compile the flex attention
-torch.set_float32_matmul_precision("high")
 torch._dynamo.config.cache_size_limit = 10000
 
 
@@ -212,6 +211,10 @@ def main(cfg: DictConfig) -> None:
         cfg.is_debug = True
     else:
         cfg.root_dir_path = os.path.join(cfg.root_dir_path, tag_prefix)
+
+    # Set the float32 matmul precision to high if the GPU compatibility is above 8.0 or the model is not rellama
+    if torch.cuda.get_device_capability() >= (8, 0) or cfg.model.name != "rellama":
+        torch.set_float32_matmul_precision("high")
 
     # Set slack messenger
     slack_channel = os.environ["SLACK_CHANNEL_NAME"]
