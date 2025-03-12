@@ -7,12 +7,15 @@ import hkkang_utils.time as time_utils
 import torch
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-
+from flash_attn import flash_attn_func
+from transformers.modeling_flash_attention_utils import _flash_attention_forward
 logger = logging.getLogger("ATTENTION")
 torch._dynamo.config.cache_size_limit = 1000
 torch.set_float32_matmul_precision("high")
 
 NUM_RUNS = 1000  # Number of times each test runs
+
+
 
 def get_document_ids(
     input_length: int,
@@ -105,6 +108,14 @@ def get_causal_retrieval_block_mask(
     )
 
     return block_mask
+
+def flash_attention_2(query, key, value, scaling):
+    """Implements FlashAttention-2"""
+    query_length = query.shape[2]
+    query = query.transpose(1, 2)
+    key = key.transpose(1, 2)
+    value = value.transpose(1, 2)
+    return _flash_attention_forward(query, key, value, attention_mask=None, query_length=query_length, is_causal=True, softmax_scale=scaling, target_dtype=torch.float16)
 
 
 def torch_causal_attention(query_states, key_states, value_states):
@@ -210,6 +221,7 @@ def main():
 
     # Device
     device = torch.device("cuda")
+    dtype = torch.float32
 
     # Get block mask
     block_mask = get_causal_retrieval_block_mask(
@@ -225,43 +237,52 @@ def main():
     compare_speed_with_and_without_torch_compile(
         "Flex attention without block mask",
         flex_attention,
-        torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True),
-        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
-        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
+        torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
         block_mask=None,
         scale=scale,
         enable_gqa=True,
         return_lse=False,
     )
 
-    # compare_speed_with_and_without_torch_compile(
-    #     "Flex attention with block mask",
-    #     flex_attention,
-    #     torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True),
-    #     torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
-    #     torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
-    #     block_mask=block_mask,
-    #     scale=scale,
-    #     enable_gqa=True,
-    #     return_lse=False,
-    # )
+    compare_speed_with_and_without_torch_compile(
+        "Flex attention with block mask",
+        flex_attention,
+        torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        block_mask=block_mask,
+        scale=scale,
+        enable_gqa=True,
+        return_lse=False,
+    )
 
-    # compare_speed_with_and_without_torch_compile(
-    #     "Custom causal attention",
-    #     custom_causal_attention,
-    #     torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True),
-    #     torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
-    #     torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
-    #     scale=scale,
-    # )
+    compare_speed_with_and_without_torch_compile(
+        "Custom causal attention",
+        custom_causal_attention,
+        torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        scale=scale,
+    )
 
-    # compare_speed_with_and_without_torch_compile(
-    #     "Torch causal attention",
-    #     torch_causal_attention,
-    #     torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True),
-    #     torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
-    #     torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True),
-    # )
+    compare_speed_with_and_without_torch_compile(
+        "Torch causal attention",
+        torch_causal_attention,
+        torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+    )
+    
+    compare_speed_with_and_without_torch_compile(
+        "FlashAttention-2",
+        flash_attention_2,
+        torch.randn(bsize, nhead, input_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim, device=device, requires_grad=True, dtype=dtype),
+        scaling=scale,
+    )
 
 
 if __name__ == "__main__":
