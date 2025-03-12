@@ -27,7 +27,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
 
-    def __init__(self, base_model: Union[ReLlama]):
+    def __init__(self, base_model: ReLlama):
         # Get llama config
         super().__init__(base_model.config)
         self.model = base_model
@@ -112,7 +112,6 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
         ```"""
-        bsize = input_ids.shape[0]
         output_attentions = (
             output_attentions
             if output_attentions is not None

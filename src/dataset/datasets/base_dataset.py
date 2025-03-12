@@ -55,7 +55,7 @@ class BaseDataset:
             )
             processed_data.update(
                 {
-                    "retrieved_chunk_token_ids": retrievd_chunk_token_ids,
+                    "retrieved_input_ids": retrievd_chunk_token_ids,
                     "num_retrieval_blocks": len(retrievd_chunk_token_ids),
                 }
             )

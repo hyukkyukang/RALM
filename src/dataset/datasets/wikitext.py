@@ -128,11 +128,11 @@ class WikiTextDataCollator:
             total_chars_cnt += len(decoded_text)
 
         # Collate the retrieved chunk token ids
-        if "retrieved_chunk_token_ids" in examples[0]:
+        if "retrieved_input_ids" in examples[0]:
             flatten_retrieved_input_ids = [
                 item
                 for example in examples
-                for item in example["retrieved_chunk_token_ids"]
+                for item in example["retrieved_input_ids"]
             ]
             retrieved_input_ids = torch.tensor(
                 flatten_retrieved_input_ids,
