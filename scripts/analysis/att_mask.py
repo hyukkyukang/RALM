@@ -11,7 +11,10 @@ import torch
 from attn_gym import visualize_attention_scores
 from omegaconf import DictConfig
 
-from src.model.rellama.mask import generate_causal_retrieval_mask_mod
+from src.model.rellama.mask import (
+    generate_causal_mask_mod,
+    generate_causal_retrieval_mask_mod,
+)
 
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
@@ -41,7 +44,7 @@ def main(cfg: DictConfig) -> None:
     key = torch.randn(bsize, kv_nhead, kv_with_retrieval_length, head_dim)
     device = torch.device("cpu")
 
-    # Get block mask
+    # Get causal retrieval block mask
     causal_retrieval_mask_mod = generate_causal_retrieval_mask_mod(
         input_length=input_length,
         retrieval_block_num=num_block_per_input,
@@ -57,6 +60,21 @@ def main(cfg: DictConfig) -> None:
         device=device,
         name="causal_retrieval_mask_mod",
     )
+
+    # Get causal mask
+    causal_mask = generate_causal_mask_mod(
+        query_length=input_length,
+    )
+
+    visualize_attention_scores(
+        query,
+        key,
+        mask_mod=causal_mask,
+        device=device,
+        name="causal_mask",
+    )
+
+    return None
 
 
 if __name__ == "__main__":

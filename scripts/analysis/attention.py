@@ -6,15 +6,14 @@ import hkkang_utils.misc as misc_utils
 import hkkang_utils.time as time_utils
 import hydra
 import torch
-import torch.nn.functional as F
 import tqdm
 from omegaconf import DictConfig
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
 from src.model.rellama.mask import (
-    generate_causal_retrieval_mask_mod,
     generate_causal_mask_mod,
+    generate_causal_retrieval_mask_mod,
 )
 
 logger = logging.getLogger("ATTENTION")
@@ -35,7 +34,6 @@ def get_causal_block_mask(
 ) -> Callable:
     causal_mask_mod = generate_causal_mask_mod(
         query_length=input_length,
-        key_length=kv_with_retrieval_length,
     )
 
     block_mask = create_block_mask(
@@ -58,6 +56,7 @@ def get_causal_retrieval_block_mask(
     retrieval_block_size: int = 128,
     device: torch.device = torch.device("cpu"),
 ) -> Callable:
+
     causal_retrieval_mask_mod = generate_causal_retrieval_mask_mod(
         input_length=input_length,
         retrieval_block_num=retrieval_block_num,
@@ -236,21 +235,29 @@ def find_differing_elements(
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Configs
+    # Model architecture parameters
     bsize = 1
     total_dim = cfg.model.architecture.hidden_size
     nhead = cfg.model.architecture.num_attention_heads
-    input_length = cfg.model.max_length
     kv_nhead = cfg.model.architecture.num_key_value_heads
     head_dim = total_dim // nhead
+    enable_gqa = kv_nhead != nhead  # Group Query Attention
+
+    # Input and scaling parameters
+    input_length = cfg.model.max_length
     chunk_size = cfg.model.input_chunk_size
     scale = head_dim**-0.5
-    # num_chunks_per_block = cfg.model.retrieval_chunk_num
-    num_chunks_per_block = 0
+
+    # Retrieval parameters
+    num_chunks_per_block = cfg.model.retrieval_chunk_num
     retrieval_block_size = chunk_size * num_chunks_per_block
+
+    # Calculate number of retrieval blocks needed
     num_block_per_input = math.ceil(input_length / chunk_size) - 1
+
+    # Calculate total sequence length including retrieval blocks
     retrieval_block_len = retrieval_block_size * num_block_per_input
     kv_with_retrieval_length = input_length + retrieval_block_len
-    enable_gqa = kv_nhead != nhead
     print(
         f"input_length: {input_length}, kv_with_retrieval_length: {kv_with_retrieval_length}"
     )
@@ -369,11 +376,27 @@ def main(cfg: DictConfig) -> None:
         flex_attention_with_causal_retrieval_block_mask,
         atol=TOLERANCE,
     ), f"Flex attention without block mask and with causal retrieval block mask are close to each other, which should not happen"
-    assert not torch.allclose(
+    assert torch.allclose(
+        torch_causal_attention_output,
+        custom_causal_attention_output,
+        atol=TOLERANCE,
+    ), f"Torch causal attention and custom causal attention are not close to each other"
+
+    there_is_retrieved_chunks = retrieval_block_len > 0
+
+    # Check if attention outputs should match based on whether there are retrieved chunks
+    should_match = not there_is_retrieved_chunks
+    are_close = torch.allclose(
         flex_attention_with_causal_retrieval_block_mask,
         flex_attention_with_causal_mask,
         atol=TOLERANCE,
-    ), f"Flex attention with causal retrieval block mask and with causal mask are close to each other, which should not happen"
+    )
+    # Assert based on expected behavior
+    assert are_close == should_match, (
+        f"Flex attention with causal retrieval block mask and with causal mask "
+        f"{'should be' if should_match else 'should not be'} close to each other"
+    )
+
     assert torch.allclose(
         flex_attention_with_causal_mask,
         custom_causal_attention_output,

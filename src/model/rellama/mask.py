@@ -134,7 +134,7 @@ def generate_causal_retrieval_mask_mod(
         # Block attention from input to retrieval blocks by default
         # This prevents input tokens from attending to retrieval blocks they shouldn't see
         causal_mask = torch.where(
-            kv_idx <= INPUT_START_IDX,  # If key is in a retrieval block
+            kv_idx < INPUT_START_IDX,  # If key is in a retrieval block
             False,  # Block attention by default
             causal_mask,  # Otherwise keep the causal mask
         )
@@ -162,21 +162,15 @@ def generate_causal_retrieval_mask_mod(
 
 def generate_causal_mask_mod(
     query_length: int,
-    key_length: int,
 ) -> Callable:
     """
     Generate a function that creates a custom attention mask for retrieval-augmented models.
 
     This mask combines standard causal masking with document-based masking to enable:
     1. Standard causal attention within the input sequence
-    2. Attention between input chunks and their corresponding retrieval blocks
-    3. Prevention of attention between unrelated chunks/blocks
 
     Args:
-        input_length: Total length of the input sequence
-        retrieval_block_num: Number of retrieval blocks
-        input_chunk_size: Size of each input chunk (default: 64)
-        retrieval_block_size: Size of each retrieval block (default: 128)
+        query_length: Total length of the input sequence
 
     Returns:
         A function that generates the appropriate attention mask
@@ -204,8 +198,6 @@ def generate_causal_mask_mod(
             Boolean tensor indicating whether attention is allowed (True) or blocked (False)
         """
         # Create standard causal mask (can only attend to previous positions)
-        # We add INPUT_START_IDX to q_idx because the query is in the input space
-        # but needs to be aligned with the full sequence including retrieval blocks
         causal_mask = q_idx >= kv_idx
 
         return causal_mask
