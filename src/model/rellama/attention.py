@@ -6,20 +6,25 @@ import torch
 import torch._dynamo
 from omegaconf import DictConfig
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-from transformers.models.llama.modeling_llama import (ALL_ATTENTION_FUNCTIONS,
-                                                      Cache,
-                                                      FlashAttentionKwargs,
-                                                      apply_rotary_pos_emb,
-                                                      eager_attention_forward)
+from transformers.models.llama.modeling_llama import (
+    ALL_ATTENTION_FUNCTIONS,
+    Cache,
+    FlashAttentionKwargs,
+    apply_rotary_pos_emb,
+    eager_attention_forward,
+)
 
-from src.model.rellama.mask import (FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE,
-                                    generate_causal_retrieval_mask_mod)
+from src.model.rellama.mask import (
+    FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE,
+    generate_causal_retrieval_mask_mod,
+)
 from src.utils import is_torch_compile_possible
 
 logger = logging.getLogger("ReLlamaAttention")
 
 if is_torch_compile_possible():
     flex_attention = torch.compile(flex_attention)
+
 
 class ReLlamaAttention(torch.nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
@@ -112,7 +117,7 @@ class ReLlamaAttention(torch.nn.Module):
         )
 
         return block_mask
-    
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -209,25 +214,37 @@ class ReLlamaAttention(torch.nn.Module):
             retrieval_key_states is not None
             and input_length > self.config.input_chunk_size
         )
-        
-    def safe_flex_attention(self, input_length, retrieval_block_num, query_states, key_states, value_states):
+
+    def safe_flex_attention(
+        self, input_length, retrieval_block_num, query_states, key_states, value_states
+    ):
         # Check if the input length is greater than FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
-        need_input_preprocess = is_torch_compile_possible() and input_length < FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
+        need_input_preprocess = (
+            is_torch_compile_possible()
+            and input_length < FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
+        )
 
         original_input_length = input_length
         # Extend the query states to FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
         if need_input_preprocess:
             bsize, nhead, seq_len, head_dim = query_states.shape
             length_diff = FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE - seq_len
-            tensor_to_extend = torch.zeros(bsize, nhead, length_diff, head_dim, device=query_states.device, dtype=query_states.dtype)
+            tensor_to_extend = torch.zeros(
+                bsize,
+                nhead,
+                length_diff,
+                head_dim,
+                device=query_states.device,
+                dtype=query_states.dtype,
+            )
             query_states = torch.cat([query_states, tensor_to_extend], dim=2)
             input_length = FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
 
         # Get the causal retrieval block mask
         causal_retrieval_block_mask = self.get_causal_retrieval_block_mask(
-                input_length=input_length,
-                retrieval_block_num=retrieval_block_num,
-                kv_with_retrieval_length=key_states.shape[2],
+            input_length=input_length,
+            retrieval_block_num=retrieval_block_num,
+            kv_with_retrieval_length=key_states.shape[2],
         )
 
         # Conduct flex attention
@@ -239,10 +256,9 @@ class ReLlamaAttention(torch.nn.Module):
             scale=self.scaling,
             enable_gqa=True,
         )
-            
+
         # Cut-off the extended input length
         if need_input_preprocess:
             attn_output = attn_output[:, :, :original_input_length, :]
-        
+
         return attn_output, None
-    
