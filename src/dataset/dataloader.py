@@ -61,6 +61,7 @@ class DistributedResumableRandomSampler(Sampler):
         self.epoch = 0
         self._generate_indices()
         self._current_index = 0
+        self.just_resumed = False
 
     def _generate_indices(self):
         """Generates and partitions indices for the current epoch.
@@ -78,15 +79,21 @@ class DistributedResumableRandomSampler(Sampler):
 
     def set_epoch(self, epoch: int):
         """Updates the epoch number and regenerates indices.
-        
+
         Args:
             epoch (int): The new epoch number
         """
+        # Skip resetting if the sampler has just resumed from a checkpoint
+        if self.just_resumed:
+            self.just_resumed = False
+            return None
+
+        # Set the epoch and indices
         self.epoch = epoch
+        self._current_index = 0
         self._generate_indices()
 
     def __iter__(self):
-        self._current_index = 0
         while self._current_index < len(self.indices):
             yield self.indices[self._current_index]
             self._current_index += 1
@@ -108,9 +115,10 @@ class DistributedResumableRandomSampler(Sampler):
         Args:
             state (dict): Previously saved state dictionary
         """
-        self._current_index = state["current_index"]
+        self._current_index = state["current_index"] + 1
         self.indices = state["indices"]
         self.epoch = state.get("epoch", 0)
+        self.just_resumed = True
 
 class ResumableDataLoader(DataLoader):
     """Extended DataLoader that supports checkpointing and resumption of training.
