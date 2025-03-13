@@ -37,7 +37,9 @@ def fix_retrieval_result(topk: int, global_chunk_id: int, dataset: BaseDataset, 
 
     # Modify the retrieval chunk ids
     retrieved_chunk_dataset.modify_retrieved_chunk_ids(global_chunk_id, retrieved_global_chunk_ids)
+    shard_idx, shard_local_idx = retrieved_chunk_dataset.global_chunk_id_to_shard_idx_and_local_idx(global_chunk_id)
     logger.info(f"Modified the retrieval chunk ids for the global chunk id: {global_chunk_id}")
+    logger.info(f"Modified shard idx: {shard_idx}, shard local idx: {shard_local_idx}")
 
     return None
 
@@ -56,7 +58,8 @@ def main(cfg: DictConfig) -> None:
     # Instantiate the retriever and move the model to the designated GPU.
     retriever = SentenceTransformerRetriever(cfg.retrieval, cfg)
     
-    target_global_chunk_id = 1_556_342
+    # target_global_chunk_id = 1_556_342
+    target_global_chunk_id = 4_366_900
 
     # Fix the retrieval result
     fix_retrieval_result(cfg.retrieval.topk, target_global_chunk_id, data_module.train_dataset, retrieved_chunk_dataset, retriever, tokenizer=data_module.train_dataset.tokenizer)
