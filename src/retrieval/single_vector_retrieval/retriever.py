@@ -242,7 +242,7 @@ class SentenceTransformerRetriever:
             self._model = AutoModel.from_pretrained(
                 self.cfg.encoding.model_name,
                 device_map=device_map,
-                attn_implementation=attn_impl,
+                attn_implementation="eager",
             )
             if self.global_cfg.use_torch_compile and is_torch_compile_possible():
                 logger.info("Compiling the model with torch compile...")
@@ -257,12 +257,13 @@ class SentenceTransformerRetriever:
         k: int,
         return_as_text: bool = False,
         passage_id_to_ignore: int = None,
+        ensure_return_topk: bool = True,
     ) -> List[Union[int, str]]:
         """
         Search for the top-k nearest neighbors of a given query string.
         """
         return self.search_batch(
-            [query], k, return_as_text, passage_to_ignore_list=[passage_id_to_ignore]
+            [query], k, return_as_text, passage_to_ignore_list=[passage_id_to_ignore], ensure_return_topk=ensure_return_topk
         )[0]
 
     def search_batch(
@@ -271,6 +272,7 @@ class SentenceTransformerRetriever:
         k: int,
         return_as_text: bool = False,
         passage_to_ignore_list: List[int] = None,
+        ensure_return_topk: bool = True,
     ) -> List[List[Union[int, str]]]:
         """
         Search for the top-k nearest neighbors for a batch of queries.
@@ -279,7 +281,7 @@ class SentenceTransformerRetriever:
         query_embeddings = self.encode_queries(queries)
 
         return self.search_batch_with_embeddings(
-            query_embeddings, k, return_as_text, passage_to_ignore_list
+            query_embeddings, k, return_as_text, passage_to_ignore_list, ensure_return_topk
         )
 
     def search_with_tokens(
@@ -302,13 +304,14 @@ class SentenceTransformerRetriever:
         k: int,
         return_as_text: bool = False,
         passage_to_ignore_list: List[int] = None,
+        ensure_return_topk: bool = True,
     ) -> List[List[Union[int, str]]]:
         """
         Search for the top-k nearest neighbors for a batch of tokens.
         """
         query_embeddings = self.encode_tokens_batch(tokens_batch)
         return self.search_batch_with_embeddings(
-            query_embeddings, k, return_as_text, passage_to_ignore_list
+            query_embeddings, k, return_as_text, passage_to_ignore_list, ensure_return_topk
         )
 
     def search_batch_with_embeddings(
@@ -317,6 +320,7 @@ class SentenceTransformerRetriever:
         k: int,
         return_as_text: bool = False,
         passage_to_ignore_list: List[int] = None,
+        ensure_return_topk: bool = True,
     ) -> List[List[Union[int, str]]]:
         """
         Search for the top-k nearest neighbors for a batch of queries.
@@ -332,19 +336,36 @@ class SentenceTransformerRetriever:
 
         # Remove the passages to ignore
         if passage_to_ignore_list is not None:
-            for b_idx, lst in enumerate(indices):
-                filtered_lst: List[int] = []
-                for idx, item in enumerate(lst):
-                    # Convert the global chunk ID to the passage ID
-                    passage_id: int = convert_global_chunk_id_to_passage_id(
-                        item, self.num_chunks_per_passage
-                    )
-                    if passage_id != passage_to_ignore_list[b_idx]:
-                        filtered_lst.append(item)
-                indices[b_idx] = filtered_lst
+            indices = [self._filter_by_passage_id(lst, passage_to_ignore_list[b_idx]) for b_idx, lst in enumerate(indices)]
 
         # Get the top-k nearest neighbors
         indices = [lst[:original_k] for lst in indices]
+
+        if ensure_return_topk:
+            # Count valid indices
+            valid_indices = sum(i != -1 for lst in indices for i in lst)
+            # Search with increased nprobe if the number of valid indices is less than the original k
+            if valid_indices < original_k:
+                # Search with increased nprobe
+                original_nprobe = self.index.nprobe
+                self.index.nprobe = k*2
+                _, indices = self.index.search(query_embeddings, k)
+                indices: List[List[int]] = [lst.tolist() for lst in indices]
+
+                # Remove the passages to ignore
+                if passage_to_ignore_list is not None:
+                    indices = [self._filter_by_passage_id(lst, passage_to_ignore_list[b_idx]) for b_idx, lst in enumerate(indices)]
+
+                # Get the top-k nearest neighbors
+                indices = [lst[:original_k] for lst in indices]
+
+                # Restore the original nprobe
+                self.index.nprobe = original_nprobe
+
+            # Count valid indices
+            valid_indices = sum(i != -1 for lst in indices for i in lst)
+
+            assert valid_indices == original_k, "The number of valid indices is not equal to the original k"
 
         # Convert the indices to text if requested
         if return_as_text:
@@ -366,7 +387,7 @@ class SentenceTransformerRetriever:
         Encode a batch of queries into embeddings, using only the CLS token representation.
         """
         tokens = self.index_tokenizer(queries, return_tensors="pt", padding=True)
-        return self.encode_tokens(tokens)
+        return self.encode_tokens_batch(tokens)
 
     def encode_tokens(self, tokens: Dict[str, torch.Tensor]) -> np.ndarray:
         """
@@ -402,3 +423,18 @@ class SentenceTransformerRetriever:
         passage = self.collection[passage_id]["input_ids"]
         token_ids = passage[chunk_start_idx:chunk_end_idx]
         return self.collection_tokenizer.decode(token_ids, skip_special_tokens=True)
+
+
+    def _filter_by_passage_id(self, global_chunk_ids: List[int], passage_id_to_ignore: int) -> List[int]:
+        """
+        Filter the global chunk IDs by the passage ID to ignore.
+        """
+        filtered_global_chunk_ids: List[int] = []
+        for global_chunk_id in global_chunk_ids:
+            # Convert the global chunk ID to the passage ID
+            passage_id: int = convert_global_chunk_id_to_passage_id(
+                global_chunk_id, self.num_chunks_per_passage
+            )
+            if passage_id != passage_id_to_ignore:
+                filtered_global_chunk_ids.append(global_chunk_id)
+        return filtered_global_chunk_ids

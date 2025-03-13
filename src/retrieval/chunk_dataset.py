@@ -2,27 +2,28 @@ import copy
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import *
 
 import numpy as np
+import torch
 import tqdm
 from datasets import Dataset
 from omegaconf import DictConfig
 
 from src.retrieval.utils import (
     convert_global_chunk_id_to_passage_id_and_local_chunk_range,
-    convert_passage_id_to_global_chunk_ids,
-    validate_saved_numpy_files,
-)
+    convert_passage_id_to_global_chunk_ids, validate_saved_numpy_files)
 from src.tokenization import ReLlamaTokenizer
 from src.utils import get_numpy_file_paths_in_dir
 
 logger = logging.getLogger("RetrievedChunkDataset")
 
 
-class RetrievedChunkDataset(Dataset):
+class RetrievedChunkDataset(torch.utils.data.Dataset):
     def __init__(self, dataset_name: str, cfg: DictConfig, global_cfg: DictConfig):
+        super().__init__()
         self.cfg = cfg
         self.global_cfg = global_cfg
         self.dataset_name = dataset_name
@@ -90,7 +91,7 @@ class RetrievedChunkDataset(Dataset):
     def data(self) -> List[Dataset]:
         if not hasattr(self, "_data"):
             # Load all shards.
-            shard_paths = self.chunk_ids_shard_paths
+            shard_paths: List[str] = self.chunk_ids_shard_paths
             shards: List[Dataset] = [
                 Dataset.load_from_disk(path) for path in tqdm.tqdm(shard_paths)
             ]
@@ -212,6 +213,15 @@ class RetrievedChunkDataset(Dataset):
 
         return None
 
+    def global_chunk_id_to_shard_idx_and_local_idx(self, global_chunk_id: int) -> Tuple[int, int]:
+        """
+        Get the shard index and local index by the global chunk id.
+        """
+        shard_idx = global_chunk_id // self.cfg.shard_size
+        shard_idx = min(shard_idx, len(self.data) - 1)
+        shard_local_idx = global_chunk_id % self.cfg.shard_size
+        return shard_idx, shard_local_idx
+
     def get_chunk_token_ids_by_global_chunk_id(self, global_chunk_id: int) -> List[int]:
         """
         Get the chunk token ids by the global chunk id.
@@ -236,27 +246,25 @@ class RetrievedChunkDataset(Dataset):
         """
         Get the retrieved input ids for the given global chunk id.
         """
-        shard_idx = global_chunk_id // self.cfg.shard_size
-        shard_idx = min(shard_idx, len(self.data) - 1)
+        shard_idx, shard_local_idx = self.global_chunk_id_to_shard_idx_and_local_idx(global_chunk_id)
         shard = self.data[shard_idx]
-        local_idx = global_chunk_id % self.cfg.shard_size
         # Get the retrieved chunk ids for the item at index idx.
-        chunk_ids: List[int] = shard[local_idx]["chunk_ids"][
+        retrieved_chunk_ids: List[int] = shard[shard_local_idx]["chunk_ids"][
             : self.num_chunks_to_use_per_idx
         ]
         # Get the actual token ids for the retrieved chunk ids
-        chunk_token_ids: List[List[int]] = []
-        for idx, chunk_id in enumerate(chunk_ids):
+        filtered_retrieved_chunk_token_ids: List[List[int]] = []
+        for idx, chunk_id in enumerate(retrieved_chunk_ids):
             if chunk_id == -1:
                 # Check remaining chunk ids are all -1
                 assert all(
-                    chunk_id == -1 for chunk_id in chunk_ids[idx:]
+                    chunk_id == -1 for chunk_id in retrieved_chunk_ids[idx:]
                 ), "Chunk ids are not properly formatted."
                 break
-            chunk_token_ids.append(
+            filtered_retrieved_chunk_token_ids.append(
                 self.get_chunk_token_ids_by_global_chunk_id(chunk_id)
             )
-        return chunk_token_ids
+        return filtered_retrieved_chunk_token_ids
 
     def get_retrieved_input_ids_by_passage_id(self, passage_id: int) -> List[List[int]]:
         """
@@ -273,3 +281,33 @@ class RetrievedChunkDataset(Dataset):
         # Remove the last item as it cannot be used as a context
         retrieved_input_ids = retrieved_input_ids[:-1]
         return retrieved_input_ids
+
+    def modify_retrieved_chunk_ids(self, global_chunk_id: int, retrieved_global_chunk_ids: List[int]) -> None:
+        """
+        Modify the retrieval chunk ids for the given global chunk id.
+        """
+        shard_idx, shard_local_idx = self.global_chunk_id_to_shard_idx_and_local_idx(global_chunk_id)
+        shard = self.data[shard_idx]
+        
+        # Check the original number of retrieved chunk ids
+        original_num_retrieved_chunk_ids: int = len(shard[shard_local_idx]["chunk_ids"])
+        assert len(retrieved_global_chunk_ids) == original_num_retrieved_chunk_ids,\
+            f"The number of retrieved chunk ids is not equal to the original number of retrieved chunk ids. {len(retrieved_global_chunk_ids)} != {original_num_retrieved_chunk_ids}"
+        
+        # Modify the retrieval chunk ids
+        shard[shard_local_idx]["chunk_ids"] = retrieved_global_chunk_ids
+        
+        shard_path: str = self.chunk_ids_shard_paths[shard_idx]
+        temp_path: str = shard_path + "_temp"
+
+        # Save to a temporary location
+        shard.save_to_disk(temp_path)
+
+        # Use os operations to replace the original
+        shutil.rmtree(shard_path)
+        os.rename(temp_path, shard_path)
+
+        # Update the dataset in memory with the newly saved one
+        self._data[shard_idx] = Dataset.load_from_disk(shard_path)
+
+        return None
