@@ -11,7 +11,7 @@ notify_end: True
 # Defaults
 defaults:
     - _self_
-    - model: llama
+    - model: rellama
     - dataset:
         - pints_ai
         - lambada
