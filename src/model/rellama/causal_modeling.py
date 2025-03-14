@@ -132,27 +132,26 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
         # Create retrieval key values if there is retrieval data and key values are not provided
         if has_retrieval_data and retrieval_key_values is None:
-            with torch.no_grad():
-                max_retrieval_block_num = max(num_retrieval_blocks)
-                block_num, chunk_num, chunk_len = retrieved_input_ids.shape
+            max_retrieval_block_num = max(num_retrieval_blocks)
+            block_num, chunk_num, chunk_len = retrieved_input_ids.shape
 
-                # We consider block_num * chunk_num as the batch size when we encode the retrieved data
-                retrieved_input_ids = retrieved_input_ids.view(
-                    block_num * chunk_num, chunk_len
-                )
-                retrieved_data_embeds = self.model(
-                    input_ids=retrieved_input_ids,
-                    use_cache=True,
-                    retrieval_block_num=0,
-                    is_retrieval=True,
-                )
-                retrieval_key_values = unpack_and_pad_retrieval_key_value_states(
-                    retrieved_data_embeds.past_key_values,
-                    num_retrieval_blocks,
-                    block_num,
-                    chunk_num,
-                    max_retrieval_block_num,
-                )
+            # We consider block_num * chunk_num as the batch size when we encode the retrieved data
+            retrieved_input_ids = retrieved_input_ids.view(
+                block_num * chunk_num, chunk_len
+            )
+            retrieved_data_embeds = self.model(
+                input_ids=retrieved_input_ids,
+                use_cache=True,
+                retrieval_block_num=0,
+                is_retrieval=True,
+            )
+            retrieval_key_values = unpack_and_pad_retrieval_key_value_states(
+                retrieved_data_embeds.past_key_values,
+                num_retrieval_blocks,
+                block_num,
+                chunk_num,
+                max_retrieval_block_num,
+            )
         # Decode with retrieval key values states
         outputs = self.model(
             input_ids=input_ids,
