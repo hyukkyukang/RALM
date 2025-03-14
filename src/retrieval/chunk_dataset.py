@@ -294,20 +294,77 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
         assert len(retrieved_global_chunk_ids) == original_num_retrieved_chunk_ids,\
             f"The number of retrieved chunk ids is not equal to the original number of retrieved chunk ids. {len(retrieved_global_chunk_ids)} != {original_num_retrieved_chunk_ids}"
         
-        # Modify the retrieval chunk ids
-        shard[shard_local_idx]["chunk_ids"] = retrieved_global_chunk_ids
-        
-        shard_path: str = self.chunk_ids_shard_paths[shard_idx]
-        temp_path: str = shard_path + "_temp"
+        # Define a function that updates the target record
+        def update_fn(example, idx):
+            if idx == shard_local_idx:
+                example["chunk_ids"] = retrieved_global_chunk_ids
+            return example
 
-        # Save to a temporary location
-        shard.save_to_disk(temp_path)
+        # Use map with indices to create a new, updated shard
+        updated_shard = shard.map(update_fn, with_indices=True)
 
-        # Use os operations to replace the original
-        shutil.rmtree(shard_path)
-        os.rename(temp_path, shard_path)
+        # Replace the old shard with the updated one in self.data
+        # (Assuming self._data has been set previously)
+        self._data[shard_idx] = updated_shard
+
+        # Save the dataset to disk
+        self.save_to_disk(shard_indices=[shard_idx])
+
+        return None
+
+    def bulk_modify_retrieved_chunk_ids(self, modifications: Dict[int, Dict[int, List[int]]]) -> None:
+        """
+        Perform bulk modifications on retrieval chunk ids.
+        `modifications` is a dictionary mapping shard index to another dictionary mapping shard local index to new chunk ids.
+        """
+        for shard_idx, updates in tqdm.tqdm(modifications.items(), desc="Bulk modifying retrieval chunk ids"):
+            shard = self.data[shard_idx]
+            def update_fn(example, idx):
+                if idx in updates:
+                    new_chunk_ids = updates[idx]
+                    original_num = len(example["chunk_ids"])
+                    assert len(new_chunk_ids) == original_num, (
+                        f"Mismatch in number of chunk ids for update at shard index {shard_idx}, local index {idx}"
+                    )
+                    example["chunk_ids"] = new_chunk_ids
+                return example
+            updated_shard = shard.map(update_fn, with_indices=True)
+            self._data[shard_idx] = updated_shard
+
+        # Save the dataset to disk
+        self.save_to_disk(shard_indices=list(modifications.keys()))
+        return None
+
+    def save_to_disk(self, shard_indices: Optional[List[int]] = None) -> None:
+        """
+        Save the dataset to disk.
+        """
+        # Save the dataset to temporary paths
+        if shard_indices is None:
+            shard_indices = list(range(len(self.data)))
+
+        # Save the dataset to temporary paths
+        num_shards: int = len(self.data)
+        for shard_idx in tqdm.tqdm(shard_indices, desc="Saving dataset to disk"):
+            if shard_idx in shard_indices:
+                shard_path: str = self.chunk_ids_shard_paths[shard_idx]
+                temp_path: str = shard_path + "_temp"
+                self.data[shard_idx].save_to_disk(temp_path)
+
+        # Move the temporary paths to the original paths
+        self._data = []
+        for shard_idx in tqdm.tqdm(range(num_shards), desc="Moving dataset to disk"):
+            if shard_idx in shard_indices:
+                shard_path: str = self.chunk_ids_shard_paths[shard_idx]
+                temp_path: str = shard_path + "_temp"
+
+                # Use os operations to replace the original
+                shutil.rmtree(shard_path)
+                os.rename(temp_path, shard_path)
 
         # Update the dataset in memory with the newly saved one
-        self._data[shard_idx] = Dataset.load_from_disk(shard_path)
-
+        for shard_idx in tqdm.tqdm(range(num_shards), desc="Updating dataset in memory"):
+            if shard_idx in shard_indices:
+                shard_path: str = self.chunk_ids_shard_paths[shard_idx]
+                self._data.append(Dataset.load_from_disk(shard_path))
         return None
