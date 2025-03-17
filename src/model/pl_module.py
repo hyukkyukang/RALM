@@ -182,11 +182,11 @@ class LightningModule(L.LightningModule):
                         sum(item).item() for item in batch["attention_mask"]
                     ],
                 }
-                if "retrieved_input_ids" in batch:
+                if "retrieved_input_ids" in batch and batch["retrieved_input_ids"] is not None:
                     data_to_dump["retrieved_input_ids"] = [
                         len(item) for item in batch["retrieved_input_ids"]
                     ]
-                if "num_retrieval_blocks" in batch:
+                if "num_retrieval_blocks" in batch and batch["num_retrieval_blocks"] is not None:
                     data_to_dump["num_retrieval_blocks"] = batch["num_retrieval_blocks"]
                 f.write(json.dumps(data_to_dump) + "\n")
 
