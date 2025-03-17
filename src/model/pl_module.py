@@ -1,5 +1,7 @@
+import json
 import logging
 import math
+import os
 from typing import *
 
 import lightning as L
@@ -61,6 +63,25 @@ class LightningModule(L.LightningModule):
         # For evaluation
         self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if self.cfg.training.detailed_logging:
+            os.makedirs(self.log_dir, exist_ok=True)
+
+    @property
+    def log_dir(self) -> str:
+        return os.path.join(
+            self.cfg.root_dir_path,
+            self.cfg.log_dir,
+            self.cfg.tag,
+        )
+
+    @property
+    def log_path(self) -> str:
+        return os.path.join(
+            self.log_dir, f"intense_logging_rank_{self.trainer.local_rank}.jsonl"
+        )
 
     @property
     def uncompiled_model(self) -> transformers.LlamaForCausalLM:
@@ -149,6 +170,26 @@ class LightningModule(L.LightningModule):
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
+        if self.cfg.training.detailed_logging:
+            # Log the batch_idx and the data index
+            with open(self.log_path, "a") as f:
+                data_to_dump = {
+                    "epoch": self.trainer.current_epoch,
+                    "batch_idx": batch_idx,
+                    "data_idx": batch["data_idx"],
+                    "input_ids_len": [len(item) for item in batch["input_ids"]],
+                    "attention_mask_sum": [
+                        sum(item).item() for item in batch["attention_mask"]
+                    ],
+                }
+                if "retrieved_input_ids" in batch:
+                    data_to_dump["retrieved_input_ids"] = [
+                        len(item) for item in batch["retrieved_input_ids"]
+                    ]
+                if "num_retrieval_blocks" in batch:
+                    data_to_dump["num_retrieval_blocks"] = batch["num_retrieval_blocks"]
+                f.write(json.dumps(data_to_dump) + "\n")
+
         if batch_idx == 0:
             # Hack to change the device of the cumulative tokens to the device of the batch
             self.cumulative_tokens = self.cumulative_tokens.to(self.device)
@@ -187,6 +228,11 @@ class LightningModule(L.LightningModule):
             )
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
+            # Log the calling optimizer
+            if self.cfg.training.detailed_logging:
+                with open(self.log_path, "a") as f:
+                    data_to_dump = {"calling_optimizer": True}
+                    f.write(json.dumps(data_to_dump) + "\n")
             optimizer = self.optimizers()
             # Clip gradients
             self.clip_gradients(
@@ -201,6 +247,11 @@ class LightningModule(L.LightningModule):
             self.lr_schedulers().step()
             # Zero the gradients
             optimizer.zero_grad()
+            # Log the optimizer called
+            if self.cfg.training.detailed_logging:
+                with open(self.log_path, "a") as f:
+                    data_to_dump = {"optimzer_called": True}
+                    f.write(json.dumps(data_to_dump) + "\n")
 
         return None
 
@@ -367,13 +418,16 @@ class LightningModule(L.LightningModule):
 
         if intermediate_iters is None:
             # Check if the configurations are valid
-            assert intermediate_lr > min_lr and intermediate_lr < max_lr, \
-                f"The intermediate learning rate ({intermediate_lr}) must be greater than " \
+            assert intermediate_lr > min_lr and intermediate_lr < max_lr, (
+                f"The intermediate learning rate ({intermediate_lr}) must be greater than "
                 f"the minimum learning rate ({min_lr}) and less than the maximum learning rate ({max_lr})"
-            assert intermediate_iters > warmup_iters, \
-                f"The intermediate steps ({intermediate_iters}) must be greater than the warmup steps ({warmup_iters})"
-            assert intermediate_iters < total_iters, \
-                f"The intermediate steps ({intermediate_iters}) must be less than the total steps ({total_iters})"
+            )
+            assert (
+                intermediate_iters > warmup_iters
+            ), f"The intermediate steps ({intermediate_iters}) must be greater than the warmup steps ({warmup_iters})"
+            assert (
+                intermediate_iters < total_iters
+            ), f"The intermediate steps ({intermediate_iters}) must be less than the total steps ({total_iters})"
 
         # Define a lambda function that wraps the JIT-compiled function
         log_if_rank_zero(
@@ -386,7 +440,13 @@ class LightningModule(L.LightningModule):
             )
         elif self.cfg.lr_scheduler.name == "linear_decay":
             lr_scheduler_fn = lambda it: lr_lambda_linear_decay(
-                it, warmup_iters, intermediate_iters, total_iters, max_lr, intermediate_lr, min_lr
+                it,
+                warmup_iters,
+                intermediate_iters,
+                total_iters,
+                max_lr,
+                intermediate_lr,
+                min_lr,
             )
         else:
             raise ValueError(
@@ -439,6 +499,15 @@ class LightningModule(L.LightningModule):
 
         # Average the loss over the gradient accumulation steps
         loss = loss / self.cfg.training.gradient_accumulation_steps
+
+        # Log the loss
+        if self.cfg.training.detailed_logging:
+            with open(self.log_path, "a") as f:
+                data_to_dump = {
+                    "loss": loss.item(),
+                }
+                f.write(json.dumps(data_to_dump) + "\n")
+
         # Backward
         self.manual_backward(loss)
         return None

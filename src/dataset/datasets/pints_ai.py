@@ -247,6 +247,10 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         # First apply the parent class collation
         batch = super().__call__(examples)
 
+        # Prevent the data_idx from being on the GPU
+        if "data_idx" in batch:
+            batch["data_idx"] = batch["data_idx"].tolist()
+
         # Decode the input_ids
         full_texts = self.tokenizer.batch_decode(
             batch["input_ids"], skip_special_tokens=True
@@ -262,9 +266,7 @@ class PintsAIDataCollator(DataCollatorForLanguageModeling):
         # Collate the retrieved chunk token ids
         if "retrieved_input_ids" in examples[0]:
             flatten_retrieved_input_ids = [
-                item
-                for example in examples
-                for item in example["retrieved_input_ids"]
+                item for example in examples for item in example["retrieved_input_ids"]
             ]
             retrieved_input_ids = torch.tensor(
                 flatten_retrieved_input_ids,

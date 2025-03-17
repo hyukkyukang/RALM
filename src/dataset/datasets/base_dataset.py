@@ -46,6 +46,7 @@ class BaseDataset:
         if self.post_processed_data is None:
             return None
         processed_data = self.post_processed_data[idx]
+        processed_data.update({"data_idx": idx})
 
         if self.is_use_retrieval:
             # Get the retrieved data

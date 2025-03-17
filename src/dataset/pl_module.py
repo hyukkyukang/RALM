@@ -191,7 +191,9 @@ class DataModule(L.LightningDataModule):
         if self.is_test:
             return None
         # Create our custom sampler
-        sampler = DistributedResumableRandomSampler(self.train_dataset, shuffle=True)
+        sampler = DistributedResumableRandomSampler(
+            self.train_dataset, shuffle=self.cfg.training.shuffle_train_dataset
+        )
         return ResumableDataLoader(
             self.train_dataset,
             batch_size=self.cfg.training.per_device_batch_size,
