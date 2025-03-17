@@ -196,7 +196,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
 
 
-@torch.compile(mode="max-autotune", disable=is_torch_compile_possible())
+@torch.compile(mode="max-autotune", disable=not is_torch_compile_possible())
 def unpack_and_pad_retrieval_key_value_states(
     key_value_states: List[Tuple[torch.Tensor, torch.Tensor]],
     num_retrieval_blocks: List[int],
