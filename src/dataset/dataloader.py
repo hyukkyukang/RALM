@@ -1,19 +1,23 @@
-import random
+import math
 import sys
-from typing import List
+from typing import TypeVar
 
 import torch
 from lightning.pytorch.callbacks import TQDMProgressBar
 from lightning.pytorch.callbacks.progress.tqdm_progress import Tqdm
-from torch.utils.data import DataLoader, Sampler
+from torch.utils.data import DataLoader
+from torch.utils.data.sampler import Sampler
 
+from src.dataset.utils import batch_step_to_position
+
+_T_co = TypeVar("_T_co", covariant=True)
 
 class MyProgressBar(TQDMProgressBar):
     """Custom progress bar that properly handles distributed training scenarios.
     Extends PyTorch Lightning's TQDMProgressBar to correctly display total batch counts
     when resuming distributed training.
     """
-    
+
     def init_train_tqdm(self) -> Tqdm:
         """Initializes a custom training progress bar.
         
@@ -35,95 +39,108 @@ class MyProgressBar(TQDMProgressBar):
             total=self.total_train_batches,
         )
 
-class DistributedResumableRandomSampler(Sampler):
-    """A distributed sampler that supports training resumption and deterministic shuffling.
-    
-    This sampler handles data distribution across multiple processes for distributed training
-    while maintaining the ability to resume training from checkpoints. It ensures deterministic
-    shuffling based on epochs and proper data partitioning across processes.
-    
-    Args:
-        data_source: Dataset to sample from
-        shuffle (bool): Whether to shuffle the indices (default: True)
+class DistributedResumableRandomSampler(Sampler[_T_co]):
+    """Distributed sampler with resumable state via saved global indices.
+
+    This sampler partitions the dataset indices across distributed processes in the
+    same way as the original DistributedSampler but saves the global index order so
+    that training can be resumed from a checkpoint. In addition, the sampler supports
+    gradient accumulation, so that the resumed index is adjusted to the start of an
+    accumulation cycle.
     """
-    
-    def __init__(self, data_source, shuffle: bool = True):
-        self.data_source = data_source
-        self.num_samples = len(data_source)
+
+    def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True, seed=42, drop_last=True, gradient_accumulation_steps=1):
+        self.dataset = dataset
         self.shuffle = shuffle
-
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            self.world_size = torch.distributed.get_world_size()
-            self.rank = torch.distributed.get_rank()
-        else:
-            self.world_size = 1
-            self.rank = 0
-
+        self.seed = seed
         self.epoch = 0
-        self._generate_indices()
-        self._current_index = 0
-        self.just_resumed = False
+        self.position = 0  # Track position in dataset
+        self.drop_last = drop_last
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.has_just_resumed = False
+        self.global_indices = None
+
+        # Get the number of replicas
+        if num_replicas is None:
+            num_replicas = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
+        self.num_replicas = num_replicas
+
+        # Get the rank of the current process
+        if rank is None:
+            rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+        self.rank = rank
+
+        # If the dataset length is evenly divisible by # of replicas, then there
+        # is no need to drop any data, since the dataset will be split equally.
+        if self.drop_last and len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type]
+            # Split to nearest available length that is evenly divisible.
+            # This is to ensure each rank receives the same amount of data when
+            # using this Sampler.
+            self.num_samples = math.ceil(
+                (len(self.dataset) - self.num_replicas) / self.num_replicas  # type: ignore[arg-type]
+            )
+        else:
+            self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)  # type: ignore[arg-type
+
+        self.set_epoch(0)
 
     @property
-    def indices(self) -> List[int]:
-        return self.global_indices[self.rank::self.world_size]
+    def indices(self):
+        if not hasattr(self, "_indices"):
+            assert self.global_indices is not None, f"global_indices are not set"
+            self._indices = self.global_indices[self.rank::self.num_replicas]
+        return self._indices
 
-    def _generate_indices(self):
-        """Generates and partitions indices for the current epoch.
-        
-        Creates a list of indices, optionally shuffles them using the epoch as seed
-        for deterministic shuffling, and partitions them across distributed processes.
-        """
-        indices = list(range(self.num_samples))
-        if self.shuffle:
-            # Use epoch as a seed so that every epoch reshuffles deterministically
-            random.seed(self.epoch)
-            random.shuffle(indices)
-        # Store the global indices
-        self.global_indices = indices
-
-    def set_epoch(self, epoch: int):
-        """Updates the epoch number and regenerates indices.
-
-        Args:
-            epoch (int): The new epoch number
-        """
-        # Skip resetting if the sampler has just resumed from a checkpoint
-        if self.just_resumed:
-            self.just_resumed = False
+    def set_epoch(self, epoch):
+        """ Set epoch to maintain shuffling consistency """
+        # If the sampler has just resumed, we don't need to shuffle the indices
+        # We have already loaded the information from the checkpoint
+        if self.has_just_resumed:
+            self.has_just_resumed = False
             return None
 
-        # Set the epoch and indices
+        # Set the epoch
         self.epoch = epoch
-        self._current_index = 0
-        self._generate_indices()
+
+        # Shuffle the indices
+        if self.shuffle:
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch)
+            global_indices = torch.randperm(self.num_samples, generator=g).tolist()
+        else:
+            global_indices = list(range(self.num_samples))
+
+        # Distribute the dataset across workers
+        self.global_indices = global_indices
+        self.position = 0  # Reset position at new epoch
+
+    def set_position_by_batch_step(self, batch_step: int, batch_size: int) -> None:
+        """ Set position in dataset """
+        # Convert to the actual position in the dataset
+        self.position = batch_step_to_position(batch_step, batch_size, self.rank)
 
     def __iter__(self):
-        while self._current_index < len(self.indices):
-            yield self.indices[self._current_index]
-            self._current_index += 1
+        return iter(self.indices[self.position:])
 
     def __len__(self):
         return len(self.indices)
 
     def state_dict(self):
-        """Creates a serializable state dictionary for checkpointing.
-        
-        Returns:
-            dict: Current state including index position, indices list, and epoch number
-        """
-        return {"current_index": self._current_index, "global_indices": self.global_indices, "epoch": self.epoch}
+        """ Save sampler state including global step """
+        return {
+            "position": self.position,
+            "epoch": self.epoch,
+            "global_indices": self.global_indices
+        }
 
     def load_state_dict(self, state):
-        """Restores sampler state from a checkpoint.
-
-        Args:
-            state (dict): Previously saved state dictionary
-        """
-        self._current_index = state["current_index"] + 1
+        """ Restore sampler state """
+        # self.position = self.modify_position_by_gradient_accumulation_steps(state["position"])
+        self.position = state["position"]
+        self.epoch = state["epoch"]
         self.global_indices = state["global_indices"]
-        self.epoch = state.get("epoch", 0)
-        self.just_resumed = True
+        self.has_just_resumed = True
+
 
 class ResumableDataLoader(DataLoader):
     """Extended DataLoader that supports checkpointing and resumption of training.
@@ -160,5 +177,4 @@ class ResumableDataLoader(DataLoader):
         """
         if hasattr(self.sampler, "load_state_dict"):
             self.sampler.load_state_dict(state)
-            
-            
+

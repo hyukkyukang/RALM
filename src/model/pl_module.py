@@ -13,21 +13,16 @@ from tensordict import TensorDict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
+from src.dataset.utils import batch_step_to_position
 from src.evaluation.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.next_token_prediction import (
-    compute_perplexity_and_bpb,
-    evaluate_next_token_prediction,
-)
+    compute_perplexity_and_bpb, evaluate_next_token_prediction)
 from src.model.llama.causal_modeling import LlamaForCausalLM
 from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import (
-    add_to_tensor_dict_safely,
-    get_compile_decorator,
-    lr_lambda_cosine_decay,
-    lr_lambda_linear_decay,
-)
+from src.model.utils import (add_to_tensor_dict_safely, get_compile_decorator,
+                             lr_lambda_cosine_decay, lr_lambda_linear_decay)
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.registry import TOKENIZER_REGISTRY
 from src.utils import is_torch_compile_possible, log_if_rank_zero
@@ -167,6 +162,10 @@ class LightningModule(L.LightningModule):
             **kwargs,
         )
 
+    def on_train_batch_start(self, *args, **kwargs) -> None:
+        super().on_train_batch_start(*args, **kwargs)
+        self.trainer.train_dataloader.sampler.set_position_by_batch_step(self.trainer.global_step, batch_size=self.cfg.training.per_device_batch_size)
+
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
@@ -190,10 +189,6 @@ class LightningModule(L.LightningModule):
                     data_to_dump["num_retrieval_blocks"] = batch["num_retrieval_blocks"]
                 f.write(json.dumps(data_to_dump) + "\n")
 
-        if batch_idx == 0:
-            # Hack to change the device of the cumulative tokens to the device of the batch
-            self.cumulative_tokens = self.cumulative_tokens.to(self.device)
-
         self.compiled_step(
             batch["input_ids"],
             batch["attention_mask"],
@@ -204,6 +199,9 @@ class LightningModule(L.LightningModule):
         )
 
         # Add the number of valid tokens to the cumulative tokens
+        if self.cumulative_tokens.device != self.device:
+            # Hack to change the device of the cumulative tokens to the device of the batch
+            self.cumulative_tokens = self.cumulative_tokens.to(self.device)
         self.cumulative_tokens += batch["total_valid_tokens_cnt"]
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
@@ -460,6 +458,7 @@ class LightningModule(L.LightningModule):
 
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
+
     def _compiled_step(
         self,
         input_ids: torch.Tensor,
@@ -573,3 +572,15 @@ class LightningModule(L.LightningModule):
             num_retrieval_blocks=batch["num_retrieval_blocks"],
         )
         return loss_sum, valid_tokens_cnt
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        # Modify the position of the sampler with the batches that stepped
+        # This is a hack to make sure the sampler is at the correct position
+        # Not sure why the two numbers are different...
+        batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"]
+        position = batch_step_to_position(batches_that_stepped+1, self.cfg.training.per_device_batch_size, self.trainer.local_rank)
+        checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0]["position"] = position
+        logger.info(f"Batches that stepped: {batches_that_stepped}")
+        logger.info(f"Setting the position of the sampler to {position}")
+        # Apply the checkpoint
+        return super().on_load_checkpoint(checkpoint)

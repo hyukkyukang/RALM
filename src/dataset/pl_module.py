@@ -192,7 +192,10 @@ class DataModule(L.LightningDataModule):
             return None
         # Create our custom sampler
         sampler = DistributedResumableRandomSampler(
-            self.train_dataset, shuffle=self.cfg.training.shuffle_train_dataset
+            self.train_dataset,
+            shuffle=self.cfg.training.shuffle_train_dataset,
+            gradient_accumulation_steps=self.cfg.training.gradient_accumulation_steps,
+            drop_last=True
         )
         return ResumableDataLoader(
             self.train_dataset,
@@ -200,8 +203,8 @@ class DataModule(L.LightningDataModule):
             num_workers=self.cfg.training.num_workers,
             collate_fn=self.train_dataset.collator,
             sampler=sampler,
-            drop_last=True,
             pin_memory=True,
+            drop_last=True,
         )
 
     def val_dataloader(self) -> List[DataLoader] | None:

@@ -129,7 +129,6 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
     )
 
     # Trainer initialization with training args
-    # Trainer initialization with training args
     trainer = L.Trainer(
         deterministic=True,
         max_epochs=cfg.training.max_epochs,
