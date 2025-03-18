@@ -2,6 +2,8 @@ from typing import Callable
 
 import torch
 
+from src.utils import is_torch_compile_possible
+
 # Input length must be greater than this value to use torch compile for flex attention
 FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE = 128
 
@@ -93,7 +95,8 @@ def generate_causal_retrieval_mask_mod(
     """
     # Smaller input length will cause error with torch compile
     assert (
-        input_length >= FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
+        not is_torch_compile_possible()
+        or  input_length >= FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
     ), f"input_length must be greater than or equal to {FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE}, but got {input_length}"
 
     # Calculate where the actual input starts (after all retrieval blocks)
