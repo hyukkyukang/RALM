@@ -510,6 +510,15 @@ class LightningModule(L.LightningModule):
 
         # Backward
         self.manual_backward(loss)
+
+        # Log the backward
+        if self.cfg.training.detailed_logging:
+            with open(self.log_path, "a") as f:
+                data_to_dump = {
+                    "backward": True
+                }
+                f.write(json.dumps(data_to_dump) + "\n")
+
         return None
 
     def _handle_batch_for_last_word_prediction(

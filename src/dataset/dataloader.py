@@ -1,5 +1,6 @@
 import random
 import sys
+from typing import List
 
 import torch
 from lightning.pytorch.callbacks import TQDMProgressBar
@@ -63,6 +64,10 @@ class DistributedResumableRandomSampler(Sampler):
         self._current_index = 0
         self.just_resumed = False
 
+    @property
+    def indices(self) -> List[int]:
+        return self.global_indices[self.rank::self.world_size]
+
     def _generate_indices(self):
         """Generates and partitions indices for the current epoch.
         
@@ -74,8 +79,8 @@ class DistributedResumableRandomSampler(Sampler):
             # Use epoch as a seed so that every epoch reshuffles deterministically
             random.seed(self.epoch)
             random.shuffle(indices)
-        # Partition indices: each process gets its own slice
-        self.indices = indices[self.rank::self.world_size]
+        # Store the global indices
+        self.global_indices = indices
 
     def set_epoch(self, epoch: int):
         """Updates the epoch number and regenerates indices.
@@ -107,7 +112,7 @@ class DistributedResumableRandomSampler(Sampler):
         Returns:
             dict: Current state including index position, indices list, and epoch number
         """
-        return {"current_index": self._current_index, "indices": self.indices, "epoch": self.epoch}
+        return {"current_index": self._current_index, "indices": self.global_indices, "epoch": self.epoch}
 
     def load_state_dict(self, state):
         """Restores sampler state from a checkpoint.
@@ -116,7 +121,7 @@ class DistributedResumableRandomSampler(Sampler):
             state (dict): Previously saved state dictionary
         """
         self._current_index = state["current_index"] + 1
-        self.indices = state["indices"]
+        self.global_indices = state["global_indices"]
         self.epoch = state.get("epoch", 0)
         self.just_resumed = True
 
