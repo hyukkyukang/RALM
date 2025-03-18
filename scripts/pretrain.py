@@ -146,7 +146,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
             save_dir=default_root_dir, name=cfg.tag, default_hp_metric=False
         ),
         strategy=DDPStrategy(
-            timeout=timedelta(hours=1), static_graph=True, gradient_as_bucket_view=True
+            timeout=timedelta(minutes=30), static_graph=True, gradient_as_bucket_view=True
         ),
         callbacks=[
             MyProgressBar(),
