@@ -112,11 +112,11 @@ class DistributedResumableRandomSampler(Sampler):
         Returns:
             dict: Current state including index position, indices list, and epoch number
         """
-        return {"current_index": self._current_index, "indices": self.global_indices, "epoch": self.epoch}
+        return {"current_index": self._current_index, "global_indices": self.global_indices, "epoch": self.epoch}
 
     def load_state_dict(self, state):
         """Restores sampler state from a checkpoint.
-        
+
         Args:
             state (dict): Previously saved state dictionary
         """
