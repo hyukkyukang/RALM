@@ -1,6 +1,6 @@
 val_dataset_name: lambada
 per_device_batch_size: 2
-val_check_interval: 0.5
+val_check_interval: 0.25
 check_val_every_n_epoch: 1
 num_sanity_val_steps: 2
 num_workers: 2
