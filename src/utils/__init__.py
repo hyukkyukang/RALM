@@ -16,6 +16,7 @@ from .misc import (
     overwrite_config,
     log_if_rank_zero,
     get_numpy_file_paths_in_dir,
+    is_model_compiled,
 )
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     "get_ip",
     "log_if_rank_zero",
     "get_numpy_file_paths_in_dir",
+    "is_model_compiled",
 ]
