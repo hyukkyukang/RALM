@@ -13,3 +13,7 @@ checkpoint_save_interval_hours: 6
 # Dataloader
 num_workers: 8
 train_dataset_name: pints_ai
+
+# Intense logging
+detailed_logging: false
+shuffle_train_dataset: true

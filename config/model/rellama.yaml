@@ -1,8 +1,13 @@
 name: rellama
 base_name: meta-llama/Llama-3.2-1B
 max_length: 1024
+# This is the retrieval chunk (i.e., single retrieval unit) size. 
+# Also, it is the length of the query chunk (i.e., input chunk) used for the retrieval.
 input_chunk_size: 64
+# Length of the retrieval block is the product of the retrieval chunk size and the number of retrieval chunks.
 retrieval_chunk_size: 64
+# Number of retrieval chunks in the retrieval block.
+retrieval_chunk_num: 1
 is_use_retrieval: true
 defaults:
   - _self_

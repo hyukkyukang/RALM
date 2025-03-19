@@ -1,8 +1,8 @@
 from .base_dataset import BaseDataset
-from .LM.curation import CurationDataCollator, CurationDataset
-from .LM.lambada import LambadaDataCollator, LambadaDataset
-from .LM.pints_ai import PintsAIDataCollator, PintsAIDataset
-from .LM.wikitext import WikiTextDataCollator, WikiTextDataset
+from .LM.curation import CurationDataset
+from .LM.lambada import LambadaDataset
+from .LM.pints_ai import PintsAIDataset
+from .LM.wikitext import WikiTextDataset
 from .NLU.glue_cola import GLUECoLADataset
 from .NLU.glue_mnli import GLUEMNLIDataset
 from .NLU.glue_mrpc import GLUEMRPCDataset
@@ -22,13 +22,9 @@ from .NLU.superglue_wsc import SuperGLUEWSCDataset
 
 __all__ = [
     "BaseDataset",
-    "CurationDataCollator",
     "CurationDataset",
-    "LambadaDataCollator",
     "LambadaDataset",
-    "PintsAIDataCollator",
     "PintsAIDataset",
-    "WikiTextDataCollator",
     "WikiTextDataset",
     "GLUECoLADataset",
     "GLUEMNLIDataset",

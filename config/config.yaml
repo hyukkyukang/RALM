@@ -11,7 +11,7 @@ notify_end: True
 # Defaults
 defaults:
     - _self_
-    - model: llama
+    - model: rellama
     - dataset:
         - pints_ai
         - lambada
@@ -43,6 +43,7 @@ defaults:
     - training: default
     - validation: default
     - testing: default
+    - retrieval: default
 hydra:
   output_subdir: null
   run:

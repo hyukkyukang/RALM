@@ -9,8 +9,10 @@ from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from src.dataset.dataloader import (DistributedResumableRandomSampler,
-                                    ResumableDataLoader)
+from src.dataset.dataloader import (
+    DistributedResumableRandomSampler,
+    ResumableDataLoader,
+)
 from src.dataset.datasets import BaseDataset
 from src.dataset.datasets.registry import DATASET_REGISTRY
 from src.tokenization import ReLlamaTokenizer
@@ -128,17 +130,6 @@ class DataModule(L.LightningDataModule):
             )
             dataset.post_process_and_save_to_disk()
 
-        # Retrieve data and save to disk
-        if dataset.is_use_retrieval:
-            if os.path.exists(dataset.retrieved_data_cache_path):
-                log_if_rank_zero(logger, "There is already retrieved data. Skip retrieval.")
-            else:
-                log_if_rank_zero(
-                    logger,
-                    f"Retrieving data for the {len(dataset.post_processed_data)} post-processed data...",
-                )
-                dataset.retrieve_and_save_to_disk()
-
         # Log the total dataset size
         log_if_rank_zero(
             logger,
@@ -170,18 +161,10 @@ class DataModule(L.LightningDataModule):
                     f"Tokenized dataset not found at {dataset.post_process_cache_path}. Run prepare_data first."
                 )
 
-            # Load the cached tokenized dataset instead of the raw dataset
-            dataset.post_processed_data = dataset.load_from_disk(
-                dataset.post_process_cache_path
-            )
-        if dataset.is_use_retrieval:
-            assert os.path.exists(dataset.retrieved_data_cache_path), (
-                f"Retrieved data not found at {dataset.retrieved_data_cache_path}. "
-                "Run prepare_data first."
-            )
-            dataset.retrieved_data = dataset.load_from_disk(
-                dataset.retrieved_data_cache_path
-            )
+        # Load the cached tokenized dataset instead of the raw dataset
+        dataset.post_processed_data = dataset.load_from_disk(
+            dataset.post_process_cache_path
+        )
 
         log_if_rank_zero(
             logger,
@@ -223,15 +206,20 @@ class DataModule(L.LightningDataModule):
         if self.is_test:
             return None
         # Create our custom sampler
-        sampler = DistributedResumableRandomSampler(self.train_dataset, shuffle=True)
+        sampler = DistributedResumableRandomSampler(
+            self.train_dataset,
+            shuffle=self.cfg.training.shuffle_train_dataset,
+            gradient_accumulation_steps=self.cfg.training.gradient_accumulation_steps,
+            drop_last=True
+        )
         return ResumableDataLoader(
             self.train_dataset,
             batch_size=self.cfg.training.per_device_batch_size,
             num_workers=self.cfg.training.num_workers,
             collate_fn=self.train_dataset.collator,
             sampler=sampler,
-            drop_last=True,
             pin_memory=True,
+            drop_last=True,
         )
 
     def val_dataloader(self) -> List[DataLoader] | None:
@@ -242,7 +230,8 @@ class DataModule(L.LightningDataModule):
         for val_dataset in self.val_datasets:
             sampler = (
                 DistributedSampler(val_dataset, shuffle=False)
-                if torch.distributed.is_available() and torch.distributed.is_initialized()
+                if torch.distributed.is_available()
+                and torch.distributed.is_initialized()
                 else None
             )
             shuffle = False if sampler is not None else None
@@ -267,7 +256,8 @@ class DataModule(L.LightningDataModule):
         for test_dataset in self.test_datasets:
             sampler = (
                 DistributedSampler(test_dataset, shuffle=False)
-                if torch.distributed.is_available() and torch.distributed.is_initialized()
+                if torch.distributed.is_available()
+                and torch.distributed.is_initialized()
                 else None
             )
             shuffle = False if sampler is not None else None

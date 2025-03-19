@@ -4,21 +4,30 @@ import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import GenerationMixin
-from transformers.models.llama.modeling_llama import (
-    KwargsForCausalLM,
-    LlamaModel,
-    LlamaPreTrainedModel,
-)
+from transformers.models.llama.modeling_llama import (KwargsForCausalLM,
+                                                      LlamaPreTrainedModel)
 
 from src.model.rellama.model import ReLlama
 from src.model.utils import initialize_weights
+from src.utils import is_torch_compile_possible
+
+
+class ReLlamaCausalLMOutputWithPast(CausalLMOutputWithPast):
+    def __init__(
+        self,
+        *args,
+        retrieval_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.retrieval_key_values = retrieval_key_values
 
 
 class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
 
-    def __init__(self, base_model: Union[LlamaModel, ReLlama]):
+    def __init__(self, base_model: ReLlama):
         # Get llama config
         super().__init__(base_model.config)
         self.model = base_model
@@ -58,8 +67,11 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        retrieval_key_values: Optional[
+            List[Tuple[torch.FloatTensor, torch.FloatTensor]]
+        ] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        retrieved_chunk_ids: Optional[torch.Tensor] = None,
+        retrieved_input_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -67,8 +79,9 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
+        num_retrieval_blocks: Optional[List[int]] = None,
         **kwargs: KwargsForCausalLM,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    ) -> Union[Tuple, ReLlamaCausalLMOutputWithPast]:
         r"""
         Args:
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -114,18 +127,32 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
 
         # Encode the retrieved data with no grad
-        if retrieved_chunk_ids is not None:
-            with torch.no_grad():
-                retrieved_data_embeds = self.model(
-                    input_ids=retrieved_chunk_ids,
-                    use_cache=True,
-                    is_retrieval=True,
-                )
-                retrieval_key_values = retrieved_data_embeds.past_key_values
-        else:
-            retrieval_key_values = None
+        has_retrieval_data = (
+            retrieved_input_ids is not None and retrieved_input_ids.numel() > 0
+        )
+        # Create retrieval key values if there is retrieval data and key values are not provided
+        if has_retrieval_data and retrieval_key_values is None:
+            max_retrieval_block_num = max(num_retrieval_blocks)
+            block_num, chunk_num, chunk_len = retrieved_input_ids.shape
 
-        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+            # We consider block_num * chunk_num as the batch size when we encode the retrieved data
+            retrieved_input_ids = retrieved_input_ids.view(
+                block_num * chunk_num, chunk_len
+            )
+            retrieved_data_embeds = self.model(
+                input_ids=retrieved_input_ids,
+                use_cache=True,
+                retrieval_block_num=0,
+                is_retrieval=True,
+            )
+            retrieval_key_values = unpack_and_pad_retrieval_key_value_states(
+                retrieved_data_embeds.past_key_values,
+                num_retrieval_blocks,
+                block_num,
+                chunk_num,
+                max_retrieval_block_num,
+            )
+        # Decode with retrieval key values states
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -159,10 +186,72 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
-        return CausalLMOutputWithPast(
+        return ReLlamaCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            retrieval_key_values=retrieval_key_values if use_cache else None,
         )
+
+
+@torch.compile(mode="max-autotune", disable=not is_torch_compile_possible())
+def unpack_and_pad_retrieval_key_value_states(
+    key_value_states: List[Tuple[torch.Tensor, torch.Tensor]],
+    num_retrieval_blocks: List[int],
+    block_num: int,
+    chunk_num: int,
+    max_retrieval_block_num: int,
+) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    """
+    Unpack and pad the retrieval key and value states into batch-wise retrieval key and value states.
+    """
+    import torch.nn.functional as F
+
+    # Original shape is (block_num * chunk_num, nhead, chunk_len, head_dim)
+    _, nhead, chunk_len, head_dim = key_value_states[0][0].shape
+    chunk_size = chunk_num * chunk_len
+    target_length = max_retrieval_block_num * chunk_size
+    retrieval_key_values = []
+
+    for key_vecs, value_vecs in key_value_states:
+        # Reshape: (block_num, chunk_num, nhead, chunk_len, head_dim)
+        # Permute to (nhead, block_num, chunk_num, chunk_len, head_dim)
+        # Finally reshape to (nhead, block_num, chunk_size, head_dim)
+        key_vecs = (
+            key_vecs.view(block_num, chunk_num, nhead, chunk_len, head_dim)
+            .permute(2, 0, 1, 3, 4)
+            .reshape(nhead, block_num, chunk_size, head_dim)
+        )
+        value_vecs = (
+            value_vecs.view(block_num, chunk_num, nhead, chunk_len, head_dim)
+            .permute(2, 0, 1, 3, 4)
+            .reshape(nhead, block_num, chunk_size, head_dim)
+        )
+
+        # Split along the block dimension using num_retrieval_blocks.
+        key_splits = torch.split(key_vecs, num_retrieval_blocks, dim=1)
+        value_splits = torch.split(value_vecs, num_retrieval_blocks, dim=1)
+
+        padded_keys = []
+        padded_values = []
+        # Process each batch element
+        for ks, vs, nblocks in zip(key_splits, value_splits, num_retrieval_blocks):
+            # ks and vs shape: (nhead, nblocks, chunk_size, head_dim)
+            # Reshape to (nhead, nblocks * chunk_size, head_dim)
+            ks = ks.reshape(nhead, nblocks * chunk_size, head_dim)
+            vs = vs.reshape(nhead, nblocks * chunk_size, head_dim)
+            pad_len = target_length - ks.shape[1]
+            if pad_len > 0:
+                ks = F.pad(ks, (0, 0, 0, pad_len))
+                vs = F.pad(vs, (0, 0, 0, pad_len))
+            padded_keys.append(ks)
+            padded_values.append(vs)
+
+        # Stack along batch dimension: (bsize, nhead, target_length, head_dim)
+        key_out = torch.stack(padded_keys, dim=0)
+        value_out = torch.stack(padded_values, dim=0)
+        retrieval_key_values.append((key_out, value_out))
+
+    return retrieval_key_values

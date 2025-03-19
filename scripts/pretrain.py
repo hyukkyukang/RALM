@@ -16,8 +16,11 @@ import lightning as L
 import psutil
 import torch
 import tqdm
-from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
-                                         ModelSummary)
+from lightning.pytorch.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+    ModelSummary,
+)
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
@@ -27,13 +30,19 @@ from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
 from src.model.utils import repair_checkpoint
 from src.training.checkpoint import TimeBasedCheckpoint
-from src.utils import add_config, is_main_process, log_if_rank_zero
+from src.utils import (
+    add_config,
+    is_main_process,
+    is_torch_compile_possible,
+    log_if_rank_zero,
+    slack_disable_callback,
+)
 
 logger = logging.getLogger("PL_Trainer")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Changing the precision of the matmul operation to high causes error when torch compile the flex attention
-torch._dynamo.config.cache_size_limit = 1000
+torch._dynamo.config.cache_size_limit = 10000
 
 
 def slack_disable_callback() -> bool:
@@ -65,11 +74,6 @@ def get_total_training_steps(
 
 def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
     default_root_dir = os.path.join(cfg.root_dir_path, cfg.log_dir, cfg.tag)
-    # Set the precision to high for the models that support it
-    # When using Flex attention inside the rellama model,
-    # the setting of the precision to high will cause an error
-    if cfg.model.name != "rellama":
-        torch.set_float32_matmul_precision("high")
 
     # Get git hash
     repo = git.Repo(search_parent_directories=True)
@@ -125,7 +129,6 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
     )
 
     # Trainer initialization with training args
-    # Trainer initialization with training args
     trainer = L.Trainer(
         deterministic=True,
         max_epochs=cfg.training.max_epochs,
@@ -142,7 +145,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
             save_dir=default_root_dir, name=cfg.tag, default_hp_metric=False
         ),
         strategy=DDPStrategy(
-            timeout=timedelta(hours=1), static_graph=True, gradient_as_bucket_view=True
+            timeout=timedelta(minutes=30), static_graph=True, gradient_as_bucket_view=True
         ),
         callbacks=[
             MyProgressBar(),
@@ -151,7 +154,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
             checkpoint_callback,
             time_based_checkpoint_callback,
         ],
-        # We are handling distributed sampler in the DataModule to use a custom training sampler 
+        # We are handling distributed sampler in the DataModule to use a custom training sampler
         # that supports checkpointing and resumption of training for DDP
         use_distributed_sampler=False,
     )
@@ -171,11 +174,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
 
     # Rename the modules in the checkpoint when using torch compile
     # For the main process with rank 0 only
-    if (
-        is_main_process()
-        and cfg.use_torch_compile
-        and torch.cuda.get_device_capability()[0] >= 7
-    ):
+    if is_main_process() and cfg.use_torch_compile and is_torch_compile_possible():
         # Find all files ending with .ckpt in the default_root_dir
         ckpt_file_paths: List[str] = glob.glob(os.path.join(default_root_dir, "*.ckpt"))
         log_if_rank_zero(
@@ -212,6 +211,10 @@ def main(cfg: DictConfig) -> None:
     else:
         cfg.root_dir_path = os.path.join(cfg.root_dir_path, tag_prefix)
 
+    # Set the float32 matmul precision to high if the GPU compatibility is above 8.0 or the model is not rellama
+    if torch.cuda.get_device_capability() >= (8, 0) or cfg.model.name != "rellama":
+        torch.set_float32_matmul_precision("high")
+
     # Set slack messenger
     slack_channel = os.environ["SLACK_CHANNEL_NAME"]
     slack_user_id = os.environ["SLACK_USER_ID"]
@@ -222,8 +225,8 @@ def main(cfg: DictConfig) -> None:
 
     # Set the messages to send to the slack channel
     start_msg = f"Pretraining started!" if cfg.notify_start else None
-    success_msg = f"<@{slack_user_id}> Succeeded pretraining language model!"
-    error_msg = f"<@{slack_user_id}> Failed pretraining language model"
+    success_msg = f"Succeeded pretraining language model!"
+    error_msg = f"Failed pretraining language model"
     # Create slack notification replies
     pretty_cfg: str = OmegaConf.to_yaml(cfg)
     full_command = " ".join(psutil.Process(os.getpid()).cmdline())
@@ -237,9 +240,10 @@ def main(cfg: DictConfig) -> None:
         start_msg=start_msg,
         success_msg=success_msg,
         error_msg=error_msg,
+        user_id_to_mention=slack_user_id,
         replies=slack_notification_replies,
         disable_callback=slack_disable_callback,
-        disable=not cfg.is_debug and not cfg.notify_end,
+        disable=cfg.is_debug or not cfg.notify_end,
     ):
         evaluation_metrics: Dict[str, Union[int, float]] = run_pretraining(cfg)
 

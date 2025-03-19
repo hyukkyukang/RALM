@@ -1,5 +1,7 @@
+import json
 import logging
 import math
+import os
 from typing import *
 
 import lightning as L
@@ -21,11 +23,14 @@ from src.model.llama.causal_modeling import LlamaForCausalLM
 from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import (add_to_tensor_dict_safely, get_compile_decorator,
-                             lr_lambda_cosine_decay, lr_lambda_linear_decay)
+from src.model.utils import (
+    add_to_tensor_dict_safely, get_compile_decorator, lr_lambda_cosine_decay,
+    lr_lambda_linear_decay,
+    update_batch_step_in_checkpoint_to_consider_gradient_accumulation,
+    update_position_in_checkpoint_for_consistency)
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.registry import TOKENIZER_REGISTRY
-from src.utils import log_if_rank_zero
+from src.utils import is_torch_compile_possible, log_if_rank_zero
 
 logger = logging.getLogger("LightningModule")
 
@@ -58,6 +63,25 @@ class LightningModule(L.LightningModule):
         # For evaluation
         self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if self.cfg.training.detailed_logging:
+            os.makedirs(self.log_dir, exist_ok=True)
+
+    @property
+    def log_dir(self) -> str:
+        return os.path.join(
+            self.cfg.root_dir_path,
+            self.cfg.log_dir,
+            self.cfg.tag,
+        )
+
+    @property
+    def log_path(self) -> str:
+        return os.path.join(
+            self.log_dir, f"intense_logging_rank_{self.trainer.local_rank}.jsonl"
+        )
 
     @property
     def uncompiled_model(self) -> transformers.LlamaForCausalLM:
@@ -88,15 +112,13 @@ class LightningModule(L.LightningModule):
         if self.cfg.training.get(
             "use_torch_compile", self.cfg.get("use_torch_compile", False)
         ):
-            if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7:
+            if is_torch_compile_possible():
                 log_if_rank_zero(
                     logger,
                     "Compiling the model with torch compile...",
                 )
                 mode = None if self.cfg.model.name == "rellama" else "max-autotune"
-                causal_model = torch.compile(
-                    causal_model, dynamic=True, mode=mode
-                )
+                causal_model = torch.compile(causal_model, dynamic=True, mode=mode)
             else:
                 log_if_rank_zero(
                     logger,
@@ -117,7 +139,8 @@ class LightningModule(L.LightningModule):
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        retrieved_chunk_ids: Optional[torch.Tensor] = None,
+        retrieved_input_ids: Optional[torch.Tensor] = None,
+        num_retrieval_blocks: Optional[List[int]] = None,
         labels: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         **kwargs,
@@ -130,7 +153,8 @@ class LightningModule(L.LightningModule):
                     attention_mask=attention_mask,
                     labels=labels,
                     use_cache=use_cache,
-                    retrieved_chunk_ids=retrieved_chunk_ids,
+                    retrieved_input_ids=retrieved_input_ids,
+                    num_retrieval_blocks=num_retrieval_blocks,
                     **kwargs,
                 )
         return self.model(
@@ -138,26 +162,53 @@ class LightningModule(L.LightningModule):
             attention_mask=attention_mask,
             labels=labels,
             use_cache=use_cache,
-            retrieved_chunk_ids=retrieved_chunk_ids,
+            retrieved_input_ids=retrieved_input_ids,
+            num_retrieval_blocks=num_retrieval_blocks,
             **kwargs,
         )
+
+    def on_train_batch_start(self, batch: Dict[str, Any], batch_idx: int) -> None:
+        super().on_train_batch_start(batch, batch_idx)
+        # Set the position of the sampler to the batch index
+        # This is to update the sampler state to save in the checkpoint
+        self.trainer.train_dataloader.sampler.set_position_by_batch_step(batch_idx, self.cfg.training.per_device_batch_size)
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
-        if batch_idx == 0:
-            # Hack to change the device of the cumulative tokens to the device of the batch
-            self.cumulative_tokens = self.cumulative_tokens.to(self.device)
+        if self.cfg.training.detailed_logging:
+            # Log the batch_idx and the data index
+            with open(self.log_path, "a") as f:
+                data_to_dump = {
+                    "epoch": self.trainer.current_epoch,
+                    "batch_idx": batch_idx,
+                    "data_idx": batch["data_idx"],
+                    "input_ids_len": [len(item) for item in batch["input_ids"]],
+                    "attention_mask_sum": [
+                        sum(item).item() for item in batch["attention_mask"]
+                    ],
+                }
+                if "retrieved_input_ids" in batch and batch["retrieved_input_ids"] is not None:
+                    data_to_dump["retrieved_input_ids"] = [
+                        len(item) for item in batch["retrieved_input_ids"]
+                    ]
+                if "num_retrieval_blocks" in batch and batch["num_retrieval_blocks"] is not None:
+                    data_to_dump["num_retrieval_blocks"] = batch["num_retrieval_blocks"]
+                f.write(json.dumps(data_to_dump) + "\n")
 
         self.compiled_step(
             batch["input_ids"],
             batch["attention_mask"],
-            batch["retrieved_chunk_ids"],
+            batch["retrieved_input_ids"],
+            batch["num_retrieval_blocks"],
             batch["labels"],
             batch["avg_char_per_token"],
         )
 
         # Add the number of valid tokens to the cumulative tokens
+        if self.cumulative_tokens.device != self.device:
+            # Hack to change the device of the cumulative tokens to the device of the batch
+            self.cumulative_tokens = self.cumulative_tokens.to(self.device)
         self.cumulative_tokens += batch["total_valid_tokens_cnt"]
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
@@ -182,6 +233,11 @@ class LightningModule(L.LightningModule):
             )
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
+            # Log the calling optimizer
+            if self.cfg.training.detailed_logging:
+                with open(self.log_path, "a") as f:
+                    data_to_dump = {"calling_optimizer": True}
+                    f.write(json.dumps(data_to_dump) + "\n")
             optimizer = self.optimizers()
             # Clip gradients
             self.clip_gradients(
@@ -196,6 +252,11 @@ class LightningModule(L.LightningModule):
             self.lr_schedulers().step()
             # Zero the gradients
             optimizer.zero_grad()
+            # Log the optimizer called
+            if self.cfg.training.detailed_logging:
+                with open(self.log_path, "a") as f:
+                    data_to_dump = {"optimzer_called": True}
+                    f.write(json.dumps(data_to_dump) + "\n")
 
         return None
 
@@ -383,13 +444,16 @@ class LightningModule(L.LightningModule):
 
         if intermediate_iters is None:
             # Check if the configurations are valid
-            assert intermediate_lr > min_lr and intermediate_lr < max_lr, \
-                f"The intermediate learning rate ({intermediate_lr}) must be greater than " \
+            assert intermediate_lr > min_lr and intermediate_lr < max_lr, (
+                f"The intermediate learning rate ({intermediate_lr}) must be greater than "
                 f"the minimum learning rate ({min_lr}) and less than the maximum learning rate ({max_lr})"
-            assert intermediate_iters > warmup_iters, \
-                f"The intermediate steps ({intermediate_iters}) must be greater than the warmup steps ({warmup_iters})"
-            assert intermediate_iters < total_iters, \
-                f"The intermediate steps ({intermediate_iters}) must be less than the total steps ({total_iters})"
+            )
+            assert (
+                intermediate_iters > warmup_iters
+            ), f"The intermediate steps ({intermediate_iters}) must be greater than the warmup steps ({warmup_iters})"
+            assert (
+                intermediate_iters < total_iters
+            ), f"The intermediate steps ({intermediate_iters}) must be less than the total steps ({total_iters})"
 
         # Define a lambda function that wraps the JIT-compiled function
         log_if_rank_zero(
@@ -402,7 +466,13 @@ class LightningModule(L.LightningModule):
             )
         elif self.cfg.lr_scheduler.name == "linear_decay":
             lr_scheduler_fn = lambda it: lr_lambda_linear_decay(
-                it, warmup_iters, intermediate_iters, total_iters, max_lr, intermediate_lr, min_lr
+                it,
+                warmup_iters,
+                intermediate_iters,
+                total_iters,
+                max_lr,
+                intermediate_lr,
+                min_lr,
             )
         else:
             raise ValueError(
@@ -416,18 +486,21 @@ class LightningModule(L.LightningModule):
 
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
+
     def _compiled_step(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        retrieved_chunk_ids: Optional[torch.Tensor] = None,
+        retrieved_input_ids: Optional[torch.Tensor] = None,
+        num_retrieval_blocks: Optional[List[int]] = None,
         labels: Optional[torch.Tensor] = None,
         avg_char_per_token: float = 0.0,
     ) -> None:
         outputs = self(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            retrieved_chunk_ids=retrieved_chunk_ids,
+            retrieved_input_ids=retrieved_input_ids,
+            num_retrieval_blocks=num_retrieval_blocks,
             labels=labels,
             use_cache=False,
         )
@@ -453,8 +526,26 @@ class LightningModule(L.LightningModule):
 
         # Average the loss over the gradient accumulation steps
         loss = loss / self.cfg.training.gradient_accumulation_steps
+
+        # Log the loss
+        if self.cfg.training.detailed_logging:
+            with open(self.log_path, "a") as f:
+                data_to_dump = {
+                    "loss": loss.item(),
+                }
+                f.write(json.dumps(data_to_dump) + "\n")
+
         # Backward
         self.manual_backward(loss)
+
+        # Log the backward
+        if self.cfg.training.detailed_logging:
+            with open(self.log_path, "a") as f:
+                data_to_dump = {
+                    "backward": True
+                }
+                f.write(json.dumps(data_to_dump) + "\n")
+
         return None
 
     def _handle_batch_for_last_word_prediction(
@@ -465,12 +556,22 @@ class LightningModule(L.LightningModule):
         bsize = len(batch["input_ids"])
         is_correct_list: List[bool] = []
         # last_word_prediction expects no padding
+        cnt = 0
         for b_idx in range(bsize):
             batch_token_ids = batch["input_ids"][b_idx].unsqueeze(0)
             target_last_words = batch["last_word"][b_idx : b_idx + 1]
-            retrieved_chunk_ids = (
-                None if batch["retrieved_chunk_ids"] is None else batch["retrieved_chunk_ids"][b_idx].unsqueeze(0)
+            num_retrieval_blocks = (
+                None
+                if batch["num_retrieval_blocks"] is None
+                else batch["num_retrieval_blocks"][b_idx : b_idx + 1]
             )
+            retrieved_input_ids = (
+                None
+                if batch["retrieved_input_ids"] is None
+                else batch["retrieved_input_ids"][cnt : cnt + num_retrieval_blocks[0]]
+            )
+            if retrieved_input_ids is not None:
+                cnt += num_retrieval_blocks[0]
 
             # Evaluate the last word prediction
             is_correct_list.extend(
@@ -479,7 +580,8 @@ class LightningModule(L.LightningModule):
                     target_last_words=target_last_words,
                     tokenizer=self.tokenizer,
                     model=self.uncompiled_model,
-                    retrieved_chunk_ids=retrieved_chunk_ids,
+                    retrieved_input_ids=retrieved_input_ids,
+                    num_retrieval_blocks=num_retrieval_blocks,
                 )
             )
         return sum(is_correct_list) / bsize
@@ -494,7 +596,8 @@ class LightningModule(L.LightningModule):
             attention_mask=batch["attention_mask"],
             labels=batch["labels"],
             model=self.uncompiled_model,
-            retrieved_chunk_ids=batch["retrieved_chunk_ids"],
+            retrieved_input_ids=batch["retrieved_input_ids"],
+            num_retrieval_blocks=batch["num_retrieval_blocks"],
         )
         return loss_sum, valid_tokens_cnt
 
@@ -524,3 +627,15 @@ class LightningModule(L.LightningModule):
                 )
             )
         return sum(is_correct_list) / bsize
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        # Update the batch_step so that we can resume from the correct position
+        # even if gradient accumulation is used
+        checkpoint = update_batch_step_in_checkpoint_to_consider_gradient_accumulation(checkpoint, self.cfg.training.gradient_accumulation_steps)
+        
+        # Modify the position of the sampler with the batches that stepped
+        # This is a hack to make sure the sampler is at the correct position
+        # Not sure why the two numbers are different...
+        checkpoint = update_position_in_checkpoint_for_consistency(checkpoint, self.cfg.training.per_device_batch_size)
+        
+        # Apply the checkpoint
+        return super().on_load_checkpoint(checkpoint)

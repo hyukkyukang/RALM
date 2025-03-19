@@ -5,7 +5,8 @@ from typing import *
 import torch
 from tensordict import TensorDict
 
-from src.utils import log_if_rank_zero
+from src.dataset.utils import batch_step_to_position
+from src.utils import is_torch_compile_possible, log_if_rank_zero
 
 logger = logging.getLogger("ModelUtils")
 
@@ -46,6 +47,31 @@ def repair_checkpoint(path):
     torch.save(ckpt, path)
 
 
+def update_batch_step_in_checkpoint_to_consider_gradient_accumulation(checkpoint: Dict[str, Any], 
+                                                                      gradient_accumulation_steps: int) -> Dict[str, Any]:
+    """
+    Update the batch step in the checkpoint to consider gradient accumulation.
+    """
+    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"]
+    value_to_subtract = batches_that_stepped % gradient_accumulation_steps
+    new_batches_that_stepped = batches_that_stepped - value_to_subtract
+    checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"] = new_batches_that_stepped
+    for key in ["total", "current"]:
+        for k, v in checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][key].items():
+            checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][key][k] = new_batches_that_stepped
+            # print(f"Updating {key} {k} from {v} to {checkpoint['loops']['fit_loop']['epoch_loop.batch_progress'][key][k]}")
+    return checkpoint
+
+def update_position_in_checkpoint_for_consistency(checkpoint: Dict[str, Any], 
+                                                  per_device_batch_size: int) -> Dict[str, Any]:
+    """
+    Update the position in the checkpoint for consistency.
+    """
+    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"]
+    position = batch_step_to_position(batches_that_stepped+1, per_device_batch_size)
+    checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0]["position"] = position
+    return checkpoint
+
 # Custom weight initialization function
 def initialize_weights(module):
     if isinstance(module, (torch.nn.Linear, torch.nn.Conv1d)):
@@ -67,8 +93,7 @@ def get_compile_decorator(
     """Returns torch.compile decorator if GPU is capable and use_compile is True, otherwise returns a no-op decorator"""
     if (
         use_compile
-        and torch.cuda.is_available()
-        and torch.cuda.get_device_capability()[0] >= 7
+        and is_torch_compile_possible()
     ):
         log_if_rank_zero(
             logger, f"Compiling the module with torch compile in {mode} mode..."

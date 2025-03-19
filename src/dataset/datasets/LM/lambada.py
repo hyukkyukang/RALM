@@ -9,7 +9,6 @@ from omegaconf import DictConfig
 
 from src.dataset.datasets.base_dataset import BaseDataset
 from src.dataset.utils import split_text_into_context_and_last_word
-from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
 
@@ -25,17 +24,14 @@ class LambadaDataset(BaseDataset):
         tokenizer: ReLlamaTokenizer,
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
-        retriever: Optional[Retriever] = None,
-        mode: Optional[str] = None,
-        task_name: Optional[str] = None,
     ):
-        super().__init__(cfg=cfg, 
-                         global_cfg=global_cfg, 
-                         tokenizer=tokenizer, 
-                         tokenized_data=tokenized_data, 
-                         post_processed_data=post_processed_data, 
-                         retrieved_data=retrieved_data, retriever=retriever, mode=mode, task_name=task_name)
+        super().__init__(
+            cfg,
+            global_cfg,
+            tokenizer,
+            tokenized_data,
+            post_processed_data,
+        )
 
     @cached_property
     def collator(self) -> "LambadaDataCollator":
@@ -128,6 +124,28 @@ class LambadaDataCollator:
                     item = example[key]
                 batch[key].append(item)
 
-        # TODO: Implement this for self.is_use_retrieval==True
-        batch["retrieved_chunk_ids"] = None
+        # Collate the retrieved chunk token ids
+        if "retrieved_input_ids" in examples[0]:
+            flatten_retrieved_input_ids = [
+                item
+                for example in examples
+                for item in example["retrieved_input_ids"]
+            ]
+            retrieved_input_ids = torch.tensor(
+                flatten_retrieved_input_ids,
+                dtype=torch.long,
+                device="cpu",
+            )
+        else:
+            retrieved_input_ids = None
+
+        if "num_retrieval_blocks" in examples[0]:
+            num_retrieval_blocks = [
+                example["num_retrieval_blocks"] for example in examples
+            ]
+        else:
+            num_retrieval_blocks = None
+
+        batch["retrieved_input_ids"] = retrieved_input_ids
+        batch["num_retrieval_blocks"] = num_retrieval_blocks
         return batch
