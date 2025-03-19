@@ -13,7 +13,6 @@ from tensordict import TensorDict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
-from src.dataset.utils import batch_step_to_position
 from src.evaluation.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.next_token_prediction import (
     compute_perplexity_and_bpb, evaluate_next_token_prediction)
@@ -21,8 +20,11 @@ from src.model.llama.causal_modeling import LlamaForCausalLM
 from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
-from src.model.utils import (add_to_tensor_dict_safely, get_compile_decorator,
-                             lr_lambda_cosine_decay, lr_lambda_linear_decay)
+from src.model.utils import (
+    add_to_tensor_dict_safely, get_compile_decorator, lr_lambda_cosine_decay,
+    lr_lambda_linear_decay,
+    update_batch_step_in_checkpoint_to_consider_gradient_accumulation,
+    update_position_in_checkpoint_for_consistency)
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.registry import TOKENIZER_REGISTRY
 from src.utils import is_torch_compile_possible, log_if_rank_zero
@@ -162,9 +164,11 @@ class LightningModule(L.LightningModule):
             **kwargs,
         )
 
-    def on_train_batch_start(self, *args, **kwargs) -> None:
-        super().on_train_batch_start(*args, **kwargs)
-        self.trainer.train_dataloader.sampler.set_position_by_batch_step(self.trainer.global_step, batch_size=self.cfg.training.per_device_batch_size)
+    def on_train_batch_start(self, batch: Dict[str, Any], batch_idx: int) -> None:
+        super().on_train_batch_start(batch, batch_idx)
+        # Set the position of the sampler to the batch index
+        # This is to update the sampler state to save in the checkpoint
+        self.trainer.train_dataloader.sampler.set_position_by_batch_step(batch_idx, self.cfg.training.per_device_batch_size)
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
@@ -574,13 +578,14 @@ class LightningModule(L.LightningModule):
         return loss_sum, valid_tokens_cnt
 
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        # Update the batch_step so that we can resume from the correct position
+        # even if gradient accumulation is used
+        checkpoint = update_batch_step_in_checkpoint_to_consider_gradient_accumulation(checkpoint, self.cfg.training.gradient_accumulation_steps)
+        
         # Modify the position of the sampler with the batches that stepped
         # This is a hack to make sure the sampler is at the correct position
         # Not sure why the two numbers are different...
-        batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"]
-        position = batch_step_to_position(batches_that_stepped+1, self.cfg.training.per_device_batch_size, self.trainer.local_rank)
-        checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0]["position"] = position
-        logger.info(f"Batches that stepped: {batches_that_stepped}")
-        logger.info(f"Setting the position of the sampler to {position}")
+        checkpoint = update_position_in_checkpoint_for_consistency(checkpoint, self.cfg.training.per_device_batch_size)
+        
         # Apply the checkpoint
         return super().on_load_checkpoint(checkpoint)

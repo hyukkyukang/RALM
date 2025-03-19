@@ -114,10 +114,10 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
         self.global_indices = global_indices
         self.position = 0  # Reset position at new epoch
 
-    def set_position_by_batch_step(self, batch_step: int, batch_size: int) -> None:
+    def set_position_by_batch_step(self, batch_step: int, per_device_batch_size: int) -> None:
         """ Set position in dataset """
         # Convert to the actual position in the dataset
-        self.position = batch_step_to_position(batch_step, batch_size, self.rank)
+        self.position = batch_step_to_position(batch_step, per_device_batch_size)
 
     def __iter__(self):
         return iter(self.indices[self.position:])
@@ -135,7 +135,6 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
 
     def load_state_dict(self, state):
         """ Restore sampler state """
-        # self.position = self.modify_position_by_gradient_accumulation_steps(state["position"])
         self.position = state["position"]
         self.epoch = state["epoch"]
         self.global_indices = state["global_indices"]

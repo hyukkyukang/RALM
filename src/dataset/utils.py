@@ -187,8 +187,8 @@ def perform_sliding_window_segmentation(
     return segments
 
 
-def batch_step_to_position(batch_step: int, batch_size: int, rank: int) -> int:
+def batch_step_to_position(batch_step: int, per_device_batch_size: int) -> int:
     """
     Convert a batch step to a position in the dataset.
     """
-    return batch_step * batch_size + rank
+    return batch_step * per_device_batch_size
