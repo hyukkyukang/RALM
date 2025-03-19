@@ -25,6 +25,7 @@ class CurationDataset(BaseDataset):
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
+        task_name: Optional[str] = None,
     ):
         super().__init__(
             cfg,
@@ -32,6 +33,7 @@ class CurationDataset(BaseDataset):
             tokenizer,
             tokenized_data,
             post_processed_data,
+            task_name,
         )
 
     @cached_property

@@ -260,10 +260,10 @@ class LightningModule(L.LightningModule):
 
         return None
 
+    @torch.compiler.disable()
     def validation_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
-        with torch.compiler.disable():
             b_size = len(batch["input_ids"])
 
             # Identify the validation dataset
@@ -303,6 +303,7 @@ class LightningModule(L.LightningModule):
                 )
             return None
 
+    @torch.compiler.disable()
     def test_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:

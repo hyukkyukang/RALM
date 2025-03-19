@@ -8,7 +8,6 @@ from omegaconf import DictConfig
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 
 from src.dataset.datasets.base_dataset import BaseDataset
-from src.retrieval.retriever import Retriever
 from src.tokenization import ReLlamaTokenizer
 
 logger = logging.getLogger("TextToTextDataset")
@@ -22,19 +21,13 @@ class TextToTextDataset(BaseDataset):
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
-        retrieved_data: Optional[Dataset] = None,
-        retriever: Optional[Retriever] = None,
-        mode: Optional[str] = None,
         task_name: Optional[str] = None,
     ):
         super().__init__(cfg=cfg, 
                          global_cfg=global_cfg, 
                          tokenizer=tokenizer, 
                          tokenized_data=tokenized_data, 
-                         post_processed_data=post_processed_data, 
-                         retrieved_data=retrieved_data, 
-                         retriever=retriever, 
-                         mode=mode, 
+                         post_processed_data=post_processed_data,
                          task_name=task_name)
 
     @abc.abstractmethod

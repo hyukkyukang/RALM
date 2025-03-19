@@ -47,7 +47,6 @@ class DataModule(L.LightningDataModule):
             cfg=self.cfg.dataset[dataset_name],
             global_cfg=self.cfg,
             tokenizer=self.tokenizer,
-            mode="train",
         )
 
     @cached_property
@@ -56,7 +55,7 @@ class DataModule(L.LightningDataModule):
             return None
         datasets: List[BaseDataset] = []
         for task_name in self.cfg.validation.task_names:
-            datasets.extend(self._get_dataset_from_task(task_name, mode="validation"))
+            datasets.extend(self._get_dataset_from_task(task_name))
         return datasets
 
     @cached_property
@@ -65,10 +64,10 @@ class DataModule(L.LightningDataModule):
             return None
         datasets: List[BaseDataset] = []
         for task_name in self.cfg.testing.task_names:
-            datasets.extend(self._get_dataset_from_task(task_name, mode="test"))
+            datasets.extend(self._get_dataset_from_task(task_name))
         return datasets
 
-    def _get_dataset_from_task(self, task_name: str, mode: str) -> List[BaseDataset]:
+    def _get_dataset_from_task(self, task_name: str) -> List[BaseDataset]:
         datasets: List[BaseDataset] = []
         task_cfg = self.cfg.task[task_name]
         for dataset_name in task_cfg.dataset_names:
@@ -77,9 +76,8 @@ class DataModule(L.LightningDataModule):
                 dataset_cls(
                     cfg=self.cfg.dataset[dataset_name],
                     global_cfg=self.cfg,
-                    tokenizer=self.tokenizer,
-                    mode=mode,
                     task_name=task_name,
+                    tokenizer=self.tokenizer
                 )
             )
         return datasets

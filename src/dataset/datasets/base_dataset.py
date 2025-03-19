@@ -26,6 +26,7 @@ class BaseDataset:
         tokenizer: Union[ReLlamaTokenizer, AutoTokenizer],
         tokenized_data: Optional[Dataset] = None,
         post_processed_data: Optional[Dataset] = None,
+        task_name: Optional[str] = None,
     ):
         self.cfg = cfg
         self.global_cfg = global_cfg
@@ -36,7 +37,7 @@ class BaseDataset:
         self.tokenized_data: Optional[Dataset] = tokenized_data
         # Dataset objects that is post-processed after tokenization
         self.post_processed_data: Optional[Dataset] = post_processed_data
-
+        self.task_name: Optional[str] = task_name
     def __len__(self):
         if self.post_processed_data is None:
             return 0

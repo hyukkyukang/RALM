@@ -21,7 +21,7 @@ def predict_next_tokens(
     retrieved_input_ids: Optional[torch.Tensor] = None,
     num_retrieval_blocks: Optional[int] = None,
     steps_to_predict: int = 6,
-    beam_width: int = 128,
+    topk: int = 128,
 ) -> List[str]:
     """Give continuation of the line with at most max_predictions BPE tokens. Returns line extended with predictions of
     the model."""
@@ -59,7 +59,7 @@ def predict_next_tokens(
         # Get the top k candidates
         _, line_encoded_candidates = torch.topk(
             logits[:, -1, :],
-            k=beam_width,
+            k=topk,
             dim=-1,
         )
         line_encoded_candidates: List[List[int]] = line_encoded_candidates.tolist()
@@ -100,13 +100,15 @@ def evaluate_last_word_prediction(
     """
     basic_tokenizer = SingletonBasicTokenizer()
     # Get the predicted completions
-    batch_text_with_predictions: List[str] = predict_next_tokens(
-        batch_token_ids=batch_token_ids,
-        tokenizer=tokenizer,
-        model=model,
-        retrieved_input_ids=retrieved_input_ids,
-        num_retrieval_blocks=num_retrieval_blocks,
-    )
+    import hkkang_utils.time as time_utils
+    with time_utils.Timer("Predict next tokens").measure(print_measured_time=True):
+        batch_text_with_predictions: List[str] = predict_next_tokens(
+            batch_token_ids=batch_token_ids,
+            tokenizer=tokenizer,
+            model=model,
+            retrieved_input_ids=retrieved_input_ids,
+            num_retrieval_blocks=num_retrieval_blocks,
+        )
     batch_input_contexts: List[str] = [
         tokenizer.decode(token_ids) for token_ids in batch_token_ids
     ]
