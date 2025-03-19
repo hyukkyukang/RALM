@@ -260,44 +260,45 @@ class LightningModule(L.LightningModule):
     def validation_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
-        b_size = len(batch["input_ids"])
+        with torch.compiler.disable():
+            b_size = len(batch["input_ids"])
 
-        # Identify the validation dataset
-        val_dataset_name = self.trainer.val_dataloaders[dataloader_idx].dataset.name
+            # Identify the validation dataset
+            val_dataset_name = self.trainer.val_dataloaders[dataloader_idx].dataset.name
 
-        # Lets perform evaluation
-        log_dic = {}
-        if val_dataset_name == "lambada":
-            # Last word prediction
-            accuracy = self._handle_batch_for_last_word_prediction(batch)
-            log_dic = {"LWP_lambada_acc": accuracy}
-        elif val_dataset_name in ["wikitext", "curation"]:
-            # Next token prediction
-            loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
-                batch
-            )
-            # Compute perplexity and bpb
-            perplexity, bpb = compute_perplexity_and_bpb(
-                loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]
-            )
-            log_dic = {
-                f"NTP_{val_dataset_name}_perplexity": perplexity,
-                f"NTP_{val_dataset_name}_bpb": bpb,
-            }
-        else:
-            raise ValueError(f"Validation step {dataloader_idx} not implemented")
+            # Lets perform evaluation
+            log_dic = {}
+            if val_dataset_name == "lambada":
+                # Last word prediction
+                accuracy = self._handle_batch_for_last_word_prediction(batch)
+                log_dic = {"LWP_lambada_acc": accuracy}
+            elif val_dataset_name in ["wikitext", "curation"]:
+                # Next token prediction
+                loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
+                    batch
+                )
+                # Compute perplexity and bpb
+                perplexity, bpb = compute_perplexity_and_bpb(
+                    loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]
+                )
+                log_dic = {
+                    f"NTP_{val_dataset_name}_perplexity": perplexity,
+                    f"NTP_{val_dataset_name}_bpb": bpb,
+                }
+            else:
+                raise ValueError(f"Validation step {dataloader_idx} not implemented")
 
-        # Log the results
-        if log_dic:
-            self.log_dict(
-                log_dic,
-                batch_size=b_size,
-                on_step=False,
-                on_epoch=True,
-                sync_dist=True,
-                add_dataloader_idx=False,
-            )
-        return None
+            # Log the results
+            if log_dic:
+                self.log_dict(
+                    log_dic,
+                    batch_size=b_size,
+                    on_step=False,
+                    on_epoch=True,
+                    sync_dist=True,
+                    add_dataloader_idx=False,
+                )
+            return None
 
     def test_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
