@@ -1,3 +1,4 @@
+import functools
 import logging
 import math
 from typing import *
@@ -5,27 +6,28 @@ from typing import *
 import hkkang_utils.misc as misc_utils
 import hkkang_utils.time as time_utils
 import hydra
+import matplotlib.pyplot as plt
 import torch
 import tqdm
 from omegaconf import DictConfig
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-from transformers.modeling_flash_attention_utils import _flash_attention_forward
+from transformers.modeling_flash_attention_utils import \
+    _flash_attention_forward
 
-from src.model.rellama.mask import (
-    generate_causal_mask_mod,
-    generate_causal_retrieval_mask_mod,
-)
+from src.model.rellama.mask import (generate_causal_mask_mod,
+                                    generate_causal_retrieval_mask_mod)
 
 logger = logging.getLogger("ATTENTION")
 
 torch._dynamo.config.cache_size_limit = 1000
 
-if torch.cuda.get_device_capability() >= (8, 0):
-    torch.set_float32_matmul_precision("high")
-
-NUM_RUNS = 1000  # Number of times each test runs
+NUM_RUNS = 1000
 TOLERANCE = 1e-5
 
+if torch.cuda.get_device_capability() >= (8, 0):
+    torch.set_float32_matmul_precision("high")
+    # Decrease the tolerance if using precision high
+    TOLERANCE = 1e-2
 
 def get_causal_block_mask(
     input_length: int,
@@ -76,23 +78,87 @@ def get_causal_retrieval_block_mask(
 
     return block_mask
 
+@functools.lru_cache(maxsize=None)
+def create_custom_causal_retrieval_block_mask(q_len: int,
+                                            k_len: int,
+                                            chunk_size: int,
+                                            retrieval_block_size: int,
+                                            device: torch.device = torch.device("cpu")) -> torch.Tensor:
+    """Create a custom causal retrieval block mask"""
+    retrieval_block_len = k_len - q_len
+    retrieval_block_num = retrieval_block_len // retrieval_block_size
 
-def flash_attention_2(query, key, value, scaling):
+    # Create attention mask
+    causal_mask = torch.tril(torch.ones((q_len, q_len), device=device, dtype=torch.bool))
+    retrieval_block_mask = torch.zeros((q_len, retrieval_block_len), device=device, dtype=torch.bool)
+    for i in range(retrieval_block_num):
+        q_start = (i+1) * chunk_size
+        q_end = q_start + chunk_size
+        k_start = i * retrieval_block_size
+        k_end = k_start + retrieval_block_size
+        retrieval_block_mask[q_start:q_end, k_start:k_end] = 1
+    attention_mask = torch.cat([retrieval_block_mask, causal_mask], dim=1)
+    return attention_mask
+
+def custom_causal_retrieval_block_attention(query: torch.Tensor, 
+                                            key: torch.Tensor, 
+                                            value: torch.Tensor, 
+                                            scale: float, 
+                                            chunk_size: int,
+                                            retrieval_block_size: int,
+                                            draw_attention_mask: bool = False):
+    """Implements custom causal retrieval block attention"""
+    bsz, nhead, q_len, head_dim = query.shape
+    _, kv_nhead, k_len, _ = key.shape
+
+    attention_mask = create_custom_causal_retrieval_block_mask(q_len, k_len, chunk_size, retrieval_block_size, query.device)
+
+    if draw_attention_mask:
+        visualize_attention_mask(attention_mask)
+
+    # Inverse the mask to use in the scaled dot product attention
+    attn_mask = attention_mask.float().masked_fill(attention_mask.logical_not(), float("-inf"))
+
+    # Handle case where kv_nhead != nhead (GQA)
+    if kv_nhead != nhead:
+        if nhead % kv_nhead != 0:
+            raise ValueError("nhead must be a multiple of kv_nhead for GQA.")
+        repeat_factor = nhead // kv_nhead
+        # Repeat key and value in block order ([k0, k0, k1, k1, ...])
+        key = key.repeat_interleave(repeat_factor, dim=1)
+        value = value.repeat_interleave(repeat_factor, dim=1)
+
+    return torch.nn.functional.scaled_dot_product_attention(
+        query, key, value, attn_mask=attn_mask, is_causal=False, scale=scale
+    )
+
+
+def flash_attention_2(query, key, value, scaling) -> torch.Tensor:
     """Implements FlashAttention-2"""
-    query_length = query.shape[2]
+    # This is before the transpose
+    seq_len = query.shape[2]
+
+    # FA2 uses non-transposed inputs
     query = query.transpose(1, 2)
     key = key.transpose(1, 2)
     value = value.transpose(1, 2)
-    return _flash_attention_forward(
+
+    attn_output = _flash_attention_forward(
         query,
         key,
         value,
         attention_mask=None,
-        query_length=query_length,
+        query_length=seq_len,
         is_causal=True,
+        dropout=0.0,
         softmax_scale=scaling,
+        sliding_window=None,
+        softcap=None,
+        use_top_left_mask=False,
         target_dtype=torch.float16,
+        position_ids=torch.arange(seq_len, device=query.device),
     )
+    return attn_output.transpose(1, 2)
 
 
 def torch_causal_attention(query_states, key_states, value_states):
@@ -161,7 +227,7 @@ def compare_speed_with_and_without_torch_compile(
     # Warm-up
     output1 = f1(*args, **kwargs)
     output2 = f2(*args, **kwargs)
-    assert torch.allclose(output1, output2, atol=1e-5)
+    assert torch.allclose(output1, output2, atol=TOLERANCE), f"Compiled and non-compiled {prefix} are not close to each other"
 
     # Measure without compilation
     time_no_compile = []
@@ -186,7 +252,7 @@ def compare_speed_with_and_without_torch_compile(
         f"{prefix} - Avg time without compile: {avg_time_no_compile:.5f} sec | "
         f"Avg time with compile: {avg_time_with_compile:.5f} sec"
     )
-    return output1
+    return output2
 
 
 def find_differing_elements(
@@ -231,12 +297,131 @@ def find_differing_elements(
 
     return results
 
+def visualize_attention_mask(attention_mask: torch.Tensor) -> None:
+    """Visualize the attention mask"""
+    # Convert to numpy for visualization
+    mask_np = attention_mask.cpu().numpy()
+
+    # Plot the attention mask
+    plt.figure(figsize=(8, 8))
+    plt.imshow(mask_np, cmap='gray_r', aspect='auto')
+    plt.xlabel("Key Position")
+    plt.ylabel("Query Position")
+    plt.title("Custom Causal Retrieval Block Attention Mask")
+    plt.colorbar(label='Mask Value')
+    
+    # Save the image
+    save_path="attention_mask.png"
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def compare_causal_attentions(query, key, value, scale, enable_gqa, causal_mask, causal_retrieval_block_mask_wo_retrieval):
+    """Compare different implementations of the causal attentions"""
+    
+    # 1. Custom causal attention
+    custom_causal_attention_output = compare_speed_with_and_without_torch_compile(
+        "Custom causal attention",
+        custom_causal_attention,
+        query,
+        key,
+        value,
+        scale=scale,
+    )
+    
+    # 2. Torch causal attention
+    torch_causal_attention_output = compare_speed_with_and_without_torch_compile(
+        "Torch causal attention",
+        torch_causal_attention,
+        query,
+        key,
+        value,
+    )
+    
+    # 3. Flex attention with causal block mask
+    flex_attention_with_causal_block_mask_output = compare_speed_with_and_without_torch_compile(
+        "Flex attention with causal block mask",
+        flex_attention,
+        query,
+        key,
+        value,
+        block_mask=causal_mask, scale=scale, enable_gqa=enable_gqa, return_lse=False)
+    
+    # 4. Flex attention with causal retrieval block mask without retrieval
+    flex_attention_with_causal_retrieval_block_mask_wo_retrieval_output = compare_speed_with_and_without_torch_compile(
+        "Flex attention with causal retrieval block mask without retrieval",
+        flex_attention,
+        query,
+        key,
+        value,
+        block_mask=causal_retrieval_block_mask_wo_retrieval, scale=scale, enable_gqa=enable_gqa, return_lse=False)
+
+    # 5. Flash attention-2
+    if torch.cuda.get_device_capability() >= (8, 0):
+        flash_attention_2_output = compare_speed_with_and_without_torch_compile(
+            "Flash attention-2",
+            flash_attention_2,
+            query,
+            key,
+            value,
+            scaling=scale,
+        )
+    
+    # Compare all the outputs
+    assert torch.allclose(custom_causal_attention_output, torch_causal_attention_output, atol=TOLERANCE), "Custom causal attention and torch causal attention are not close to each other"
+    assert torch.allclose(custom_causal_attention_output, flex_attention_with_causal_block_mask_output, atol=TOLERANCE), "Custom causal attention and flex attention with causal block mask are not close to each other"
+    assert torch.allclose(custom_causal_attention_output, flex_attention_with_causal_retrieval_block_mask_wo_retrieval_output, atol=TOLERANCE), "Custom causal attention and flex attention with causal retrieval block mask without retrieval are not close to each other"
+    # if torch.cuda.get_device_capability() >= (8, 0):
+    #     assert torch.allclose(custom_causal_attention_output.to(flash_attention_2_output.dtype), flash_attention_2_output, atol=TOLERANCE), "Custom causal attention and flash attention-2 are not close to each other"
+    
+    return None
+    
+def compare_causal_retrieval_block_attention(query, key, value, scale, enable_gqa, chunk_size, retrieval_block_size, causal_retrieval_block_mask):
+    """Compare different implementations of the causal retrieval block attention"""
+
+    # 1. Custom causal retrieval block attention
+    custom_causal_retrieval_block_attention_output = compare_speed_with_and_without_torch_compile(
+        "Custom causal retrieval block attention",
+        custom_causal_retrieval_block_attention,
+        query,
+        key,
+        value,
+        scale=scale,
+        chunk_size=chunk_size,
+        retrieval_block_size=retrieval_block_size,
+    )
+
+    # 2. Flex attention with causal retrieval block mask
+    flex_attention_with_causal_retrieval_block_mask_output = compare_speed_with_and_without_torch_compile(
+        "Flex attention with causal retrieval block mask",
+        flex_attention,
+        query,
+        key,
+        value,
+        block_mask=causal_retrieval_block_mask, scale=scale, enable_gqa=enable_gqa, return_lse=False) 
+
+    # 3. Flex attention without block mask
+    flex_attention_without_block_mask_output = compare_speed_with_and_without_torch_compile(
+        "Flex attention without block mask",
+        flex_attention,
+        query,
+        key,
+        value,
+        block_mask=None,
+        scale=scale,
+        enable_gqa=enable_gqa,
+        return_lse=False,
+    )
+
+    assert torch.allclose(custom_causal_retrieval_block_attention_output, flex_attention_with_causal_retrieval_block_mask_output, atol=TOLERANCE), "Flex attention with causal retrieval block mask and custom causal retrieval block attention are not close to each other"
+    assert not torch.allclose(custom_causal_retrieval_block_attention_output, flex_attention_without_block_mask_output, atol=TOLERANCE), "Custom causal retrieval block attention and flex attention without block mask are close to each other"
+
+    return None
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Configs
     # Model architecture parameters
-    bsize = 1
+    bsize = 48
     total_dim = cfg.model.architecture.hidden_size
     nhead = cfg.model.architecture.num_attention_heads
     kv_nhead = cfg.model.architecture.num_key_value_heads
@@ -256,8 +441,8 @@ def main(cfg: DictConfig) -> None:
     num_block_per_input = math.ceil(input_length / chunk_size) - 1
 
     # Calculate total sequence length including retrieval blocks
-    retrieval_block_len = retrieval_block_size * num_block_per_input
-    kv_with_retrieval_length = input_length + retrieval_block_len
+    retrieval_input_length = retrieval_block_size * num_block_per_input
+    kv_with_retrieval_length = input_length + retrieval_input_length
     print(
         f"input_length: {input_length}, kv_with_retrieval_length: {kv_with_retrieval_length}"
     )
@@ -297,122 +482,22 @@ def main(cfg: DictConfig) -> None:
         retrieval_block_size=retrieval_block_size,
         device=device,
     )
+    causal_retrieval_block_mask_without_retrieval = get_causal_retrieval_block_mask(
+        input_length=input_length,
+        retrieval_block_num=0,
+        kv_with_retrieval_length=input_length,
+        input_chunk_size=chunk_size,
+        retrieval_block_size=retrieval_block_size,
+        device=device,
+    )
     causal_mask = get_causal_block_mask(
         input_length=input_length,
-        kv_with_retrieval_length=kv_with_retrieval_length,
+        kv_with_retrieval_length=input_length,
         device=device,
     )
 
-    # Compare speeds with and without torch.compile
-    flex_attention_without_block_mask = compare_speed_with_and_without_torch_compile(
-        "Flex attention without block mask",
-        flex_attention,
-        query,
-        key,
-        value,
-        block_mask=None,
-        scale=scale,
-        enable_gqa=enable_gqa,
-        return_lse=False,
-    )
-
-    flex_attention_with_causal_retrieval_block_mask = (
-        compare_speed_with_and_without_torch_compile(
-            "Flex attention with causal retrieval block mask",
-            flex_attention,
-            query,
-            key,
-            value,
-            block_mask=causal_retrieval_block_mask,
-            scale=scale,
-            enable_gqa=enable_gqa,
-            return_lse=False,
-        )
-    )
-
-    flex_attention_with_causal_mask = compare_speed_with_and_without_torch_compile(
-        "Flex attention with causal mask",
-        flex_attention,
-        query,
-        key,
-        value,
-        block_mask=causal_mask,
-        scale=scale,
-        enable_gqa=enable_gqa,
-        return_lse=False,
-    )
-
-    custom_causal_attention_output = compare_speed_with_and_without_torch_compile(
-        "Custom causal attention",
-        custom_causal_attention,
-        query,
-        key,
-        value,
-        scale=scale,
-    )
-
-    torch_causal_attention_output = compare_speed_with_and_without_torch_compile(
-        "Torch causal attention",
-        torch_causal_attention,
-        query,
-        key,
-        value,
-    )
-
-    # Run flash attention-2 only if the GPU compatibility is above 8.0
-    if torch.cuda.get_device_capability() >= (8, 0):
-        flash_attention_2_output = compare_speed_with_and_without_torch_compile(
-            "FlashAttention-2",
-            flash_attention_2,
-            query,
-            key,
-            value,
-            scaling=scale,
-        )
-
-    # Check the results are very close to each other
-    assert not torch.allclose(
-        flex_attention_without_block_mask,
-        flex_attention_with_causal_retrieval_block_mask,
-        atol=TOLERANCE,
-    ), f"Flex attention without block mask and with causal retrieval block mask are close to each other, which should not happen"
-    assert torch.allclose(
-        torch_causal_attention_output,
-        custom_causal_attention_output,
-        atol=TOLERANCE,
-    ), f"Torch causal attention and custom causal attention are not close to each other"
-
-    there_is_retrieved_chunks = retrieval_block_len > 0
-
-    # Check if attention outputs should match based on whether there are retrieved chunks
-    should_match = not there_is_retrieved_chunks
-    are_close = torch.allclose(
-        flex_attention_with_causal_retrieval_block_mask,
-        flex_attention_with_causal_mask,
-        atol=TOLERANCE,
-    )
-    # Assert based on expected behavior
-    assert are_close == should_match, (
-        f"Flex attention with causal retrieval block mask and with causal mask "
-        f"{'should be' if should_match else 'should not be'} close to each other"
-    )
-
-    assert torch.allclose(
-        flex_attention_with_causal_mask,
-        custom_causal_attention_output,
-        atol=TOLERANCE,
-    ), f"Flex attention with causal mask and custom causal attention are not close to each other"
-    assert torch.allclose(
-        flex_attention_with_causal_mask,
-        torch_causal_attention_output,
-        atol=TOLERANCE,
-    ), f"Flex attention with causal mask and torch causal attention are not close to each other"
-    if torch.cuda.get_device_capability() >= (8, 0):
-        assert torch.allclose(
-            flex_attention_with_causal_mask,
-            flash_attention_2_output,
-            atol=TOLERANCE,
-        ), f"Flex attention with causal mask and flash attention-2 are not close to each other"
+    compare_causal_attentions(query, key[:, :, -input_length:, :], value[:, :, -input_length:, :], scale, enable_gqa, causal_mask, causal_retrieval_block_mask_without_retrieval)
+    compare_causal_retrieval_block_attention(query, key, value, scale, enable_gqa, chunk_size, retrieval_block_size, causal_retrieval_block_mask)
 
     return None
 

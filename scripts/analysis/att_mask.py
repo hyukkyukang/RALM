@@ -61,6 +61,23 @@ def main(cfg: DictConfig) -> None:
         name="causal_retrieval_mask_mod",
     )
 
+    # Get causal retrieval block mask without retrieval
+    causal_retrieval_block_mask_without_retrieval = generate_causal_retrieval_mask_mod(
+        input_length=input_length,
+        retrieval_block_num=0,
+        input_chunk_size=chunk_size,
+        retrieval_block_size=retrieval_block_size,
+        device=device,
+    )
+
+    visualize_attention_scores(
+        query,
+        key[:, :, :input_length, :],
+        mask_mod=causal_retrieval_block_mask_without_retrieval,
+        device=device,
+        name="causal_retrieval_block_mask_without_retrieval",
+    )
+    
     # Get causal mask
     causal_mask = generate_causal_mask_mod(
         query_length=input_length,
