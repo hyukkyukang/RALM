@@ -310,6 +310,11 @@ class Llama(LlamaPreTrainedModel):
             for b_idx, position_id in enumerate(position_ids):
                 attention_mask[b_idx, :, position_id + 1 :] = float("-inf")
 
+            # Reshape the attention mask to be 4D
+            attention_mask = attention_mask.unsqueeze(1).expand(
+                -1, self.config.num_attention_heads, -1, -1
+            )
+
         hidden_states = inputs_embeds
 
         # create position embeddings to be shared across the decoder layers

@@ -13,21 +13,24 @@ from tensordict import TensorDict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
-from src.evaluation.LM.last_word_prediction import \
-    evaluate_last_word_prediction
+from src.evaluation.LM.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.LM.next_token_prediction import (
-    compute_perplexity_and_bpb, evaluate_next_token_prediction)
-from src.evaluation.NLU.text_to_text_prediction import \
-    evaluate_text_to_text_prediction
+    compute_perplexity_and_bpb,
+    evaluate_next_token_prediction,
+)
+from src.evaluation.NLU.text_to_text_prediction import evaluate_text_to_text_prediction
 from src.model.llama.causal_modeling import LlamaForCausalLM
 from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
 from src.model.utils import (
-    add_to_tensor_dict_safely, get_compile_decorator, lr_lambda_cosine_decay,
+    add_to_tensor_dict_safely,
+    get_compile_decorator,
+    lr_lambda_cosine_decay,
     lr_lambda_linear_decay,
     update_batch_step_in_checkpoint_to_consider_gradient_accumulation,
-    update_position_in_checkpoint_for_consistency)
+    update_position_in_checkpoint_for_consistency,
+)
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.registry import TOKENIZER_REGISTRY
 from src.utils import is_torch_compile_possible, log_if_rank_zero
@@ -171,7 +174,9 @@ class LightningModule(L.LightningModule):
         super().on_train_batch_start(batch, batch_idx)
         # Set the position of the sampler to the batch index
         # This is to update the sampler state to save in the checkpoint
-        self.trainer.train_dataloader.sampler.set_position_by_batch_step(batch_idx, self.cfg.training.per_device_batch_size)
+        self.trainer.train_dataloader.sampler.set_position_by_batch_step(
+            batch_idx, self.cfg.training.per_device_batch_size
+        )
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
@@ -188,11 +193,17 @@ class LightningModule(L.LightningModule):
                         sum(item).item() for item in batch["attention_mask"]
                     ],
                 }
-                if "retrieved_input_ids" in batch and batch["retrieved_input_ids"] is not None:
+                if (
+                    "retrieved_input_ids" in batch
+                    and batch["retrieved_input_ids"] is not None
+                ):
                     data_to_dump["retrieved_input_ids"] = [
                         len(item) for item in batch["retrieved_input_ids"]
                     ]
-                if "num_retrieval_blocks" in batch and batch["num_retrieval_blocks"] is not None:
+                if (
+                    "num_retrieval_blocks" in batch
+                    and batch["num_retrieval_blocks"] is not None
+                ):
                     data_to_dump["num_retrieval_blocks"] = batch["num_retrieval_blocks"]
                 f.write(json.dumps(data_to_dump) + "\n")
 
@@ -264,44 +275,52 @@ class LightningModule(L.LightningModule):
     def validation_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
-            b_size = len(batch["input_ids"])
+        b_size = len(batch["input_ids"])
 
-            # Identify the validation dataset
-            val_dataset_name = self.trainer.val_dataloaders[dataloader_idx].dataset.name
+        # Identify the validation dataset
+        val_dataset_name = self.trainer.val_dataloaders[dataloader_idx].dataset.name
 
-            # Lets perform evaluation
-            log_dic = {}
-            if val_dataset_name == "lambada":
-                # Last word prediction
-                accuracy = self._handle_batch_for_last_word_prediction(batch)
-                log_dic = {"LWP_lambada_acc": accuracy}
-            elif val_dataset_name in ["wikitext", "curation"]:
-                # Next token prediction
-                loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
-                    batch
-                )
-                # Compute perplexity and bpb
-                perplexity, bpb = compute_perplexity_and_bpb(
-                    loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]
-                )
-                log_dic = {
-                    f"NTP_{val_dataset_name}_perplexity": perplexity,
-                    f"NTP_{val_dataset_name}_bpb": bpb,
-                }
-            else:
-                raise ValueError(f"Validation step {dataloader_idx} not implemented")
+        # Lets perform evaluation
+        log_dic = {}
+        if val_dataset_name == "lambada":
+            # Last word prediction
+            accuracy: float = evaluate_last_word_prediction(
+                model_name=self.cfg.model.name,
+                model=self.uncompiled_model,
+                tokenizer=self.tokenizer,
+                batch_token_ids=batch["input_ids"],
+                target_last_words=batch["last_word"],
+                retrieved_input_ids=batch["retrieved_input_ids"],
+                num_retrieval_blocks=batch["num_retrieval_blocks"],
+            )
+            log_dic = {"LWP_lambada_acc": accuracy}
+        elif val_dataset_name in ["wikitext", "curation"]:
+            # Next token prediction
+            loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
+                batch
+            )
+            # Compute perplexity and bpb
+            perplexity, bpb = compute_perplexity_and_bpb(
+                loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]
+            )
+            log_dic = {
+                f"NTP_{val_dataset_name}_perplexity": perplexity,
+                f"NTP_{val_dataset_name}_bpb": bpb,
+            }
+        else:
+            raise ValueError(f"Validation step {dataloader_idx} not implemented")
 
-            # Log the results
-            if log_dic:
-                self.log_dict(
-                    log_dic,
-                    batch_size=b_size,
-                    on_step=False,
-                    on_epoch=True,
-                    sync_dist=True,
-                    add_dataloader_idx=False,
-                )
-            return None
+        # Log the results
+        if log_dic:
+            self.log_dict(
+                log_dic,
+                batch_size=b_size,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+                add_dataloader_idx=False,
+            )
+        return None
 
     @torch.compiler.disable()
     def test_step(
@@ -311,11 +330,22 @@ class LightningModule(L.LightningModule):
 
         # Identify the test dataset
         task_name: str = self.trainer.test_dataloaders[dataloader_idx].dataset.task_name
-        test_dataset_name: str = self.trainer.test_dataloaders[dataloader_idx].dataset.name
+        test_dataset_name: str = self.trainer.test_dataloaders[
+            dataloader_idx
+        ].dataset.name
 
         # Perform evaluation
         if task_name == "last_word_prediction":
-            accuracy = self._handle_batch_for_last_word_prediction(batch)
+            accuracy: float = evaluate_last_word_prediction(
+                model_name=self.cfg.model.name,
+                model=self.uncompiled_model,
+                tokenizer=self.tokenizer,
+                batch_token_ids=batch["input_ids"],
+                target_last_words=batch["last_word"],
+                pad_start_positions=batch["pad_start_positions"],
+                retrieved_input_ids=batch["retrieved_input_ids"],
+                num_retrieval_blocks=batch["num_retrieval_blocks"],
+            )
             add_to_tensor_dict_safely(
                 self.test_step_outputs, "LWP_lambada_acc_sum", accuracy * bsize
             )
@@ -343,7 +373,9 @@ class LightningModule(L.LightningModule):
             # Natural language inference
             accuracy = self._handle_batch_for_natural_language_understanding(batch)
             add_to_tensor_dict_safely(
-                self.test_step_outputs, f"NLU_{test_dataset_name}_acc_sum", accuracy * bsize
+                self.test_step_outputs,
+                f"NLU_{test_dataset_name}_acc_sum",
+                accuracy * bsize,
             )
             add_to_tensor_dict_safely(
                 self.test_step_outputs, f"NLU_{test_dataset_name}_acc_cnt", bsize
@@ -488,7 +520,6 @@ class LightningModule(L.LightningModule):
 
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
-
     def _compiled_step(
         self,
         input_ids: torch.Tensor,
@@ -543,38 +574,10 @@ class LightningModule(L.LightningModule):
         # Log the backward
         if self.cfg.training.detailed_logging:
             with open(self.log_path, "a") as f:
-                data_to_dump = {
-                    "backward": True
-                }
+                data_to_dump = {"backward": True}
                 f.write(json.dumps(data_to_dump) + "\n")
 
         return None
-
-    def _handle_batch_for_last_word_prediction(
-        self,
-        batch: Dict[str, torch.Tensor],
-    ) -> float:
-        """Last word prediction should be evaluated for each instance in the batch."""
-        bsize = len(batch["input_ids"])
-        
-        # last_word_prediction expects no padding
-        batch_token_ids = batch["input_ids"]
-        target_last_words = batch["last_word"]
-        num_retrieval_blocks = batch["num_retrieval_blocks"]
-        retrieved_input_ids = batch["retrieved_input_ids"]
-        pad_start_positions = batch["pad_start_positions"]
-
-        # Evaluate the last word prediction
-        is_correct_list = evaluate_last_word_prediction(
-                batch_token_ids=batch_token_ids,
-                target_last_words=target_last_words,
-                tokenizer=self.tokenizer,
-                model=self.uncompiled_model,
-                retrieved_input_ids=retrieved_input_ids,
-                num_retrieval_blocks=num_retrieval_blocks,
-                pad_start_positions=pad_start_positions,
-            )
-        return sum(is_correct_list) / bsize
 
     def _handle_batch_for_next_token_prediction(
         self,
@@ -604,7 +607,9 @@ class LightningModule(L.LightningModule):
             target_texts: List[str] = batch["target"][b_idx : b_idx + 1]
             text_choices: List[str] = batch["choices"]
             retrieved_chunk_ids = (
-                None if batch["retrieved_chunk_ids"] is None else batch["retrieved_chunk_ids"][b_idx].unsqueeze(0)
+                None
+                if batch["retrieved_chunk_ids"] is None
+                else batch["retrieved_chunk_ids"][b_idx].unsqueeze(0)
             )
             is_correct_list.extend(
                 evaluate_text_to_text_prediction(
@@ -617,15 +622,20 @@ class LightningModule(L.LightningModule):
                 )
             )
         return sum(is_correct_list) / bsize
+
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         # Update the batch_step so that we can resume from the correct position
         # even if gradient accumulation is used
-        checkpoint = update_batch_step_in_checkpoint_to_consider_gradient_accumulation(checkpoint, self.cfg.training.gradient_accumulation_steps)
-        
+        checkpoint = update_batch_step_in_checkpoint_to_consider_gradient_accumulation(
+            checkpoint, self.cfg.training.gradient_accumulation_steps
+        )
+
         # Modify the position of the sampler with the batches that stepped
         # This is a hack to make sure the sampler is at the correct position
         # Not sure why the two numbers are different...
-        checkpoint = update_position_in_checkpoint_for_consistency(checkpoint, self.cfg.training.per_device_batch_size)
-        
+        checkpoint = update_position_in_checkpoint_for_consistency(
+            checkpoint, self.cfg.training.per_device_batch_size
+        )
+
         # Apply the checkpoint
         return super().on_load_checkpoint(checkpoint)

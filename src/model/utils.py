@@ -4,6 +4,7 @@ from typing import *
 
 import torch
 from tensordict import TensorDict
+from transformers.cache_utils import DynamicCache
 
 from src.dataset.utils import batch_step_to_position
 from src.utils import is_torch_compile_possible, log_if_rank_zero
@@ -47,30 +48,46 @@ def repair_checkpoint(path):
     torch.save(ckpt, path)
 
 
-def update_batch_step_in_checkpoint_to_consider_gradient_accumulation(checkpoint: Dict[str, Any], 
-                                                                      gradient_accumulation_steps: int) -> Dict[str, Any]:
+def update_batch_step_in_checkpoint_to_consider_gradient_accumulation(
+    checkpoint: Dict[str, Any], gradient_accumulation_steps: int
+) -> Dict[str, Any]:
     """
     Update the batch step in the checkpoint to consider gradient accumulation.
     """
-    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"]
+    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
+        "_batches_that_stepped"
+    ]
     value_to_subtract = batches_that_stepped % gradient_accumulation_steps
     new_batches_that_stepped = batches_that_stepped - value_to_subtract
-    checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"] = new_batches_that_stepped
+    checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
+        "_batches_that_stepped"
+    ] = new_batches_that_stepped
     for key in ["total", "current"]:
-        for k, v in checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][key].items():
-            checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][key][k] = new_batches_that_stepped
+        for k, v in checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][
+            key
+        ].items():
+            checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][key][
+                k
+            ] = new_batches_that_stepped
             # print(f"Updating {key} {k} from {v} to {checkpoint['loops']['fit_loop']['epoch_loop.batch_progress'][key][k]}")
     return checkpoint
 
-def update_position_in_checkpoint_for_consistency(checkpoint: Dict[str, Any], 
-                                                  per_device_batch_size: int) -> Dict[str, Any]:
+
+def update_position_in_checkpoint_for_consistency(
+    checkpoint: Dict[str, Any], per_device_batch_size: int
+) -> Dict[str, Any]:
     """
     Update the position in the checkpoint for consistency.
     """
-    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"]["_batches_that_stepped"]
-    position = batch_step_to_position(batches_that_stepped+1, per_device_batch_size)
-    checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0]["position"] = position
+    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
+        "_batches_that_stepped"
+    ]
+    position = batch_step_to_position(batches_that_stepped + 1, per_device_batch_size)
+    checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0][
+        "position"
+    ] = position
     return checkpoint
+
 
 # Custom weight initialization function
 def initialize_weights(module):
@@ -91,10 +108,7 @@ def get_compile_decorator(
     use_compile: bool = True, fullgraph: bool = False, mode: str = "default"
 ):
     """Returns torch.compile decorator if GPU is capable and use_compile is True, otherwise returns a no-op decorator"""
-    if (
-        use_compile
-        and is_torch_compile_possible()
-    ):
+    if use_compile and is_torch_compile_possible():
         log_if_rank_zero(
             logger, f"Compiling the module with torch compile in {mode} mode..."
         )
@@ -143,13 +157,13 @@ def lr_lambda_cosine_decay(
 
 @torch.jit.script
 def lr_lambda_linear_decay(
-    it: int, 
-    warmup_iters: int, 
-    intermediate_iters: int, 
-    total_iters: int, 
-    max_lr: float, 
-    intermediate_lr: float, 
-    min_lr: float = 0.0
+    it: int,
+    warmup_iters: int,
+    intermediate_iters: int,
+    total_iters: int,
+    max_lr: float,
+    intermediate_lr: float,
+    min_lr: float = 0.0,
 ) -> float:
     """
     Computes a learning rate multiplier that follows:
@@ -180,8 +194,97 @@ def lr_lambda_linear_decay(
     elif it < total_iters:
         # Linear decay from intermediate_lr to min_lr.
         # This phase spans from it = warmup_iters + intermediate_iters to it = total_iters.
-        progress = float(it - (warmup_iters + intermediate_iters)) / float(total_iters - (warmup_iters + intermediate_iters))
+        progress = float(it - (warmup_iters + intermediate_iters)) / float(
+            total_iters - (warmup_iters + intermediate_iters)
+        )
         return (intermediate_lr + (min_lr - intermediate_lr) * progress) / max_lr
     else:
         return min_lr / max_lr
-    
+
+
+def update_dynamic_cache(
+    dynamic_cache: DynamicCache,
+    key_states: torch.Tensor,
+    value_states: torch.Tensor,
+    layer_idx: int,
+    pad_start_positions: Optional[torch.LongTensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+    Parameters:
+        key_states (`torch.Tensor`):
+            The new key states to cache.
+        value_states (`torch.Tensor`):
+            The new value states to cache.
+        layer_idx (`int`):
+            The index of the layer to cache the states for.
+        cache_kwargs (`Dict[str, Any]`, `optional`):
+            Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+    Return:
+        A tuple containing the updated key and value states.
+    """
+
+    # Update the number of seen tokens
+    if layer_idx == 0:
+        dynamic_cache._seen_tokens += key_states.shape[-2]
+
+    # Update the cache
+    if key_states is not None:
+        if len(dynamic_cache.key_cache) <= layer_idx:
+            # There may be skipped layers, fill them with empty lists
+            for _ in range(len(dynamic_cache.key_cache), layer_idx):
+                dynamic_cache.key_cache.append([])
+                dynamic_cache.value_cache.append([])
+            dynamic_cache.key_cache.append(key_states)
+            dynamic_cache.value_cache.append(value_states)
+        elif len(dynamic_cache.key_cache[layer_idx]) == 0:
+            # fills previously skipped layers; checking for tensor causes errors
+            dynamic_cache.key_cache[layer_idx] = key_states
+            dynamic_cache.value_cache[layer_idx] = value_states
+        else:
+            if pad_start_positions is None:
+                dynamic_cache.key_cache[layer_idx] = torch.cat(
+                    [dynamic_cache.key_cache[layer_idx], key_states], dim=-2
+                )
+                dynamic_cache.value_cache[layer_idx] = torch.cat(
+                    [dynamic_cache.value_cache[layer_idx], value_states], dim=-2
+                )
+            else:
+                # Insert the new key and value states starting at the non-pad positions
+                new_key_cache: List[torch.Tensor] = []
+                new_value_cache: List[torch.Tensor] = []
+                for batch_idx, pad_start_idx in enumerate(pad_start_positions):
+                    new_key_cache.append(
+                        torch.cat(
+                            [
+                                dynamic_cache.key_cache[layer_idx][
+                                    batch_idx, :, :pad_start_idx
+                                ],
+                                key_states[batch_idx, :, :],
+                                dynamic_cache.key_cache[layer_idx][
+                                    batch_idx, :, pad_start_idx:
+                                ],
+                            ],
+                            dim=-2,
+                        )
+                    )
+                    new_value_cache.append(
+                        torch.cat(
+                            [
+                                dynamic_cache.value_cache[layer_idx][
+                                    batch_idx, :, :pad_start_idx
+                                ],
+                                value_states[batch_idx, :, :],
+                                dynamic_cache.value_cache[layer_idx][
+                                    batch_idx, :, pad_start_idx:
+                                ],
+                            ],
+                            dim=-2,
+                        )
+                    )
+                dynamic_cache.key_cache[layer_idx] = torch.stack(new_key_cache)
+                dynamic_cache.value_cache[layer_idx] = torch.stack(new_value_cache)
+
+    return dynamic_cache.key_cache[layer_idx], dynamic_cache.value_cache[layer_idx]

@@ -87,6 +87,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/pretrain.py \
 ```bash
 python scripts/evaluate.py \
     testing.task_names="[last_word_prediction, next_token_prediction]" \
+    model=llama \
     +ckpt_path=/root/RETRO/runs/retro/lion.ckpt \
-    testing.per_device_batch_size=1
+    testing.per_device_batch_size=1 \
+    testing.num_workers=1
 ```

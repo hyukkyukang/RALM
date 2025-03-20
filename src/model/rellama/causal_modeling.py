@@ -4,8 +4,10 @@ import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import GenerationMixin
-from transformers.models.llama.modeling_llama import (KwargsForCausalLM,
-                                                      LlamaPreTrainedModel)
+from transformers.models.llama.modeling_llama import (
+    KwargsForCausalLM,
+    LlamaPreTrainedModel,
+)
 
 from src.model.rellama.model import ReLlama
 from src.model.utils import initialize_weights
@@ -78,6 +80,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
         num_retrieval_blocks: Optional[List[int]] = None,
         **kwargs: KwargsForCausalLM,
@@ -165,6 +168,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            pad_start_positions=pad_start_positions,
             is_retrieval=False,
             **kwargs,
         )

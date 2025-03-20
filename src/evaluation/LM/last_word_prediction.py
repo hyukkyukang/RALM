@@ -5,29 +5,31 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.dataset.utils import SingletonBasicTokenizer
-from src.model.wrapper.next_word_predictor import NextWordPredictor
+from src.model.wrapper import NEXT_WORD_PREDICTOR_REGISTRY
 from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("LastWordPrediction")
 
 
 def evaluate_last_word_prediction(
+    model_name: str,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
     batch_token_ids: torch.Tensor,
     target_last_words: List[str],
-    tokenizer: AutoTokenizer,
-    model: AutoModelForCausalLM,
     pad_start_positions: Optional[torch.LongTensor] = None,
     retrieved_input_ids: Optional[torch.Tensor] = None,
     num_retrieval_blocks: Optional[List[int]] = None,
     is_analyze: bool = False,
-) -> List[bool]:
+) -> float:
     """batch_token_ids shape: (bsize, seq_len)
     There should be no padding tokens in the batch_token_ids, which means all the sequences should be of the same length.
     """
     basic_tokenizer = SingletonBasicTokenizer()
 
+    next_word_predictor = NEXT_WORD_PREDICTOR_REGISTRY[model_name](model, tokenizer)
+
     # Get the predicted completions
-    next_word_predictor = NextWordPredictor(model, tokenizer)
     batch_text_with_predictions: List[str] = next_word_predictor.predict(
         input_ids=batch_token_ids,
         pad_start_positions=pad_start_positions,
@@ -77,4 +79,4 @@ def evaluate_last_word_prediction(
             log_if_rank_zero(logger, f"Target word: {target_last_words[analyze_idx]}")
             log_if_rank_zero(logger, f"Is correct: {batch_is_correct[analyze_idx]}")
             log_if_rank_zero(logger, "-" * 100 + "\n")
-    return batch_is_correct
+    return sum(batch_is_correct) / len(batch_is_correct)

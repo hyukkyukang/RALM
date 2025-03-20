@@ -18,6 +18,7 @@ from src.model.rellama.mask import (
     FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE,
     generate_causal_retrieval_mask_mod,
 )
+from src.model.utils import update_dynamic_cache
 from src.utils import is_torch_compile_possible
 
 logger = logging.getLogger("ReLlamaAttention")
@@ -124,8 +125,8 @@ class ReLlamaAttention(torch.nn.Module):
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         past_key_value: Optional[Cache] = None,
+        pad_start_positions: Optional[torch.LongTensor] = None,
         retrieval_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        cache_position: Optional[torch.LongTensor] = None,
         **kwargs: FlashAttentionKwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
@@ -152,10 +153,12 @@ class ReLlamaAttention(torch.nn.Module):
 
         # Update the key and value states with the past key and value states
         if past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_value.update(
-                key_states, value_states, self.layer_idx, cache_kwargs
+            key_states, value_states = update_dynamic_cache(
+                past_key_value,
+                key_states,
+                value_states,
+                self.layer_idx,
+                pad_start_positions,
             )
             # Check if using past key and value states
             is_using_past_state = query_states.shape[2] < key_states.shape[2]

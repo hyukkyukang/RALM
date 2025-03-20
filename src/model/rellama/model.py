@@ -231,6 +231,7 @@ class ReLlama(ReLlamaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[torch.LongTensor] = None,
         is_retrieval: Optional[bool] = False,
         **flash_attn_kwargs: FlashAttentionKwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
@@ -284,6 +285,10 @@ class ReLlama(ReLlamaPreTrainedModel):
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
+        else:
+            position_ids = torch.tensor(
+                position_ids, device=inputs_embeds.device
+            ).unsqueeze(1)
 
         causal_mask = self._update_causal_mask(
             attention_mask,
@@ -292,6 +297,37 @@ class ReLlama(ReLlamaPreTrainedModel):
             past_key_values,
             output_attentions,
         )
+        assert (
+            attention_mask is None
+        ), f"Expect causal_mask to be None here. Have not checked if it's okay to have it non-None."
+        # Create custom attention mask if:
+        # 1. position_ids is different across the batch
+        # 2. position_ids is not equal to cache_position
+        if (not torch.all(torch.eq(position_ids, position_ids[0]))) or (
+            not torch.equal(position_ids[0], cache_position)
+        ):
+            # We expect only one token is given for the query.
+            # If not, we need to fix the below attention mask.
+            assert (
+                inputs_embeds.shape[1] == 1
+            ), f"Expect inputs_embeds to have shape [bsz, 1, ...] but got {inputs_embeds.shape}"
+
+            # Create custom attention mask
+            attention_mask = torch.ones(
+                inputs_embeds.shape[0],
+                1,
+                cache_position.item() + 1,
+                device=inputs_embeds.device,
+                dtype=inputs_embeds.dtype,
+            )
+            # Mask out the positions after the position_ids
+            for b_idx, position_id in enumerate(position_ids):
+                attention_mask[b_idx, :, position_id + 1 :] = float("-inf")
+
+            # Reshape the attention mask to be 4D
+            attention_mask = attention_mask.unsqueeze(1).expand(
+                -1, self.config.num_attention_heads, -1, -1
+            )
 
         hidden_states = inputs_embeds
 
@@ -318,6 +354,7 @@ class ReLlama(ReLlamaPreTrainedModel):
                     use_cache,
                     cache_position,
                     position_embeddings,
+                    pad_start_positions,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -330,7 +367,7 @@ class ReLlama(ReLlamaPreTrainedModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
-                    **flash_attn_kwargs,
+                    pad_start_positions=pad_start_positions**flash_attn_kwargs,
                 )
 
             hidden_states = layer_outputs[0]
@@ -383,7 +420,9 @@ def get_customized_llama_config(
     llama_config.input_chunk_size = cfg.model.input_chunk_size
     llama_config.retrieval_chunk_size = cfg.model.retrieval_chunk_size
     llama_config.retrieval_chunk_num = cfg.model.retrieval_chunk_num
-    llama_config.retrieval_block_size = cfg.model.retrieval_chunk_size * cfg.model.retrieval_chunk_num
+    llama_config.retrieval_block_size = (
+        cfg.model.retrieval_chunk_size * cfg.model.retrieval_chunk_num
+    )
     assert (
         llama_config.max_position_embeddings % llama_config.input_chunk_size == 0
     ), "max_position_embeddings must be divisible by input_chunk_size"
