@@ -120,12 +120,22 @@ class LambadaDataCollator:
         # Iterate over the examples and add the data to the batch
         for example in examples:
             for key in first_example_keys:
-                if key == "input_ids":
+                if key in ["input_ids", "attention_mask"]:
                     item = torch.tensor(example[key])
                 else:
                     item = example[key]
                 batch[key].append(item)
 
+        # Collate the input ids by adding padding if necessary
+        batch["input_ids"] = torch.nn.utils.rnn.pad_sequence(
+            batch["input_ids"],
+            batch_first=True,
+            padding_value=self.tokenizer.pad_token_id,
+        )
+        batch["pad_start_positions"] = [sum(item).item() for item in batch["attention_mask"]]
+        batch["attention_mask"] = torch.nn.utils.rnn.pad_sequence(
+            batch["attention_mask"], batch_first=True, padding_value=0
+        )
         # Collate the retrieved chunk token ids
         if "retrieved_input_ids" in examples[0]:
             flatten_retrieved_input_ids = [

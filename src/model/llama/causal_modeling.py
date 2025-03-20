@@ -65,6 +65,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
         **kwargs: KwargsForCausalLM,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -124,6 +125,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            pad_start_positions=pad_start_positions,
             **kwargs,
         )
 

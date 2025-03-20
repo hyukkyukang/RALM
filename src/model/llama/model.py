@@ -224,6 +224,7 @@ class Llama(LlamaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[torch.LongTensor] = None,
         **flash_attn_kwargs: FlashAttentionKwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = (
@@ -270,14 +271,44 @@ class Llama(LlamaPreTrainedModel):
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
+        else:
+            position_ids = torch.tensor(
+                position_ids, device=inputs_embeds.device
+            ).unsqueeze(1)
 
-        causal_mask = self._update_causal_mask(
+        attention_mask = self._update_causal_mask(
             attention_mask,
             inputs_embeds,
             cache_position,
             past_key_values,
             output_attentions,
         )
+        assert (
+            attention_mask is None
+        ), f"Expect causal_mask to be None here. Have not checked if it's okay to have it non-None."
+        # Create custom attention mask if:
+        # 1. position_ids is different across the batch
+        # 2. position_ids is not equal to cache_position
+        if (not torch.all(torch.eq(position_ids, position_ids[0]))) or (
+            not torch.equal(position_ids[0], cache_position)
+        ):
+            # We expect only one token is given for the query.
+            # If not, we need to fix the below attention mask.
+            assert (
+                inputs_embeds.shape[1] == 1
+            ), f"Expect inputs_embeds to have shape [bsz, 1, ...] but got {inputs_embeds.shape}"
+
+            # Create custom attention mask
+            attention_mask = torch.ones(
+                inputs_embeds.shape[0],
+                1,
+                cache_position.item() + 1,
+                device=inputs_embeds.device,
+                dtype=inputs_embeds.dtype,
+            )
+            # Mask out the positions after the position_ids
+            for b_idx, position_id in enumerate(position_ids):
+                attention_mask[b_idx, :, position_id + 1 :] = float("-inf")
 
         hidden_states = inputs_embeds
 
@@ -296,24 +327,26 @@ class Llama(LlamaPreTrainedModel):
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
-                    causal_mask,
+                    attention_mask,
                     position_ids,
                     past_key_values,
                     output_attentions,
                     use_cache,
                     cache_position,
                     position_embeddings,
+                    pad_start_positions,
                 )
             else:
                 layer_outputs = decoder_layer(
                     hidden_states,
-                    attention_mask=causal_mask,
+                    attention_mask=attention_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
+                    pad_start_positions=pad_start_positions,
                     **flash_attn_kwargs,
                 )
 

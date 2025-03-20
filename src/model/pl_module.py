@@ -556,35 +556,23 @@ class LightningModule(L.LightningModule):
     ) -> float:
         """Last word prediction should be evaluated for each instance in the batch."""
         bsize = len(batch["input_ids"])
-        is_correct_list: List[bool] = []
+        
         # last_word_prediction expects no padding
-        cnt = 0
-        for b_idx in range(bsize):
-            batch_token_ids = batch["input_ids"][b_idx].unsqueeze(0)
-            target_last_words = batch["last_word"][b_idx : b_idx + 1]
-            num_retrieval_blocks = (
-                None
-                if batch["num_retrieval_blocks"] is None
-                else batch["num_retrieval_blocks"][b_idx : b_idx + 1]
-            )
-            retrieved_input_ids = (
-                None
-                if batch["retrieved_input_ids"] is None
-                else batch["retrieved_input_ids"][cnt : cnt + num_retrieval_blocks[0]]
-            )
-            if retrieved_input_ids is not None:
-                cnt += num_retrieval_blocks[0]
+        batch_token_ids = batch["input_ids"]
+        target_last_words = batch["last_word"]
+        num_retrieval_blocks = batch["num_retrieval_blocks"]
+        retrieved_input_ids = batch["retrieved_input_ids"]
+        pad_start_positions = batch["pad_start_positions"]
 
-            # Evaluate the last word prediction
-            is_correct_list.extend(
-                evaluate_last_word_prediction(
-                    batch_token_ids=batch_token_ids,
-                    target_last_words=target_last_words,
-                    tokenizer=self.tokenizer,
-                    model=self.uncompiled_model,
-                    retrieved_input_ids=retrieved_input_ids,
-                    num_retrieval_blocks=num_retrieval_blocks,
-                )
+        # Evaluate the last word prediction
+        is_correct_list = evaluate_last_word_prediction(
+                batch_token_ids=batch_token_ids,
+                target_last_words=target_last_words,
+                tokenizer=self.tokenizer,
+                model=self.uncompiled_model,
+                retrieved_input_ids=retrieved_input_ids,
+                num_retrieval_blocks=num_retrieval_blocks,
+                pad_start_positions=pad_start_positions,
             )
         return sum(is_correct_list) / bsize
 

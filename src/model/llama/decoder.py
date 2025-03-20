@@ -37,6 +37,7 @@ class LlamaDecoderLayer(torch.nn.Module):
         position_embeddings: Optional[
             Tuple[torch.Tensor, torch.Tensor]
         ] = None,  # necessary, but kept here for BC
+        pad_start_positions: Optional[torch.LongTensor] = None,
         **kwargs: FlashAttentionKwargs,
     ) -> Tuple[
         torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]
@@ -55,6 +56,7 @@ class LlamaDecoderLayer(torch.nn.Module):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            pad_start_positions=pad_start_positions,
             **kwargs,
         )
         hidden_states = residual + hidden_states
