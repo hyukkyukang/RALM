@@ -1,7 +1,8 @@
-layers: 12
-num_attention_heads: 12
-num_key_value_heads: 3 # this should be factor of num_attention_heads
-intermediate_size: 3072
-hidden_size: 768
-# We follow the GPT-2 architecture to decide the above parameters.
-# https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py?t
+small:
+  layers: 12
+  num_attention_heads: 12
+  num_key_value_heads: 3 # this should be factor of num_attention_heads
+  intermediate_size: 3072
+  hidden_size: 768
+  # We follow the GPT-2 architecture to decide the above parameters.
+  # https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py?t

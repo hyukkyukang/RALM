@@ -44,6 +44,11 @@ defaults:
     - validation: default
     - testing: default
     - retrieval: default
+    - architecture:
+        - small
+        - medium
+        - large
+        - xl
 hydra:
   output_subdir: null
   run:

@@ -9,6 +9,4 @@ retrieval_chunk_size: 64
 # Number of retrieval chunks in the retrieval block.
 retrieval_chunk_num: 1
 is_use_retrieval: true
-defaults:
-  - _self_
-  - architecture: small
+architecture: small
