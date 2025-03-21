@@ -69,10 +69,6 @@ class ReLlamaAttention(torch.nn.Module):
     def device(self) -> torch.device:
         return next(self.q_proj.parameters()).device
 
-    @functools.cached_property
-    def retrieval_block_size(self) -> int:
-        return self.config.retrieval_chunk_size * self.config.retrieval_chunk_num
-
     @functools.lru_cache(maxsize=None)
     def get_attention_interface(self, output_attentions: bool = False) -> Callable:
         attention_interface: Callable = eager_attention_forward
@@ -103,7 +99,7 @@ class ReLlamaAttention(torch.nn.Module):
             input_length=input_length,
             retrieval_block_num=retrieval_block_num,
             input_chunk_size=self.config.input_chunk_size,
-            retrieval_block_size=self.retrieval_block_size,
+            retrieval_block_size=self.config.retrieval_block_size,
             device=self.device,
         )
 
@@ -142,15 +138,6 @@ class ReLlamaAttention(torch.nn.Module):
             query_states, key_states, cos, sin
         )
 
-        # Get the retrieved key and value for this layer
-        if retrieval_key_value is None:
-            retrieval_key_states = None
-            retrieval_value_states = None
-        else:
-            retrieval_key_states, retrieval_value_states = retrieval_key_value[
-                self.layer_idx
-            ]
-
         # Update the key and value states with the past key and value states
         if past_key_value is not None:
             key_states, value_states = update_dynamic_cache(
@@ -160,30 +147,46 @@ class ReLlamaAttention(torch.nn.Module):
                 self.layer_idx,
                 pad_start_positions,
             )
-            # Check if using past key and value states
-            is_using_past_state = query_states.shape[2] < key_states.shape[2]
+
+        # Get the retrieved key and value for this layer
+        if retrieval_key_value is None:
+            retrieval_key_states = None
+            retrieval_value_states = None
+        else:
+            retrieval_key_states, retrieval_value_states = retrieval_key_value[
+                self.layer_idx
+            ]
+
+        is_using_kv_cache = query_states.shape[2] != key_states.shape[2]
+        if is_using_kv_cache:
+            # This is when there are past key and value states
+            # Which means we have to select the last retrieval block from the past key and value states
             # Use only the last retrieval block if we are using past key and value states
-            # Other retrieval blocks are already used and is not needed for the current step
-            if is_using_past_state and retrieval_key_value is not None:
-                retrieval_key_states = retrieval_key_states[-1:]
-                retrieval_value_states = retrieval_value_states[-1:]
+            # Retrieval blocks are already used and is not needed for the current step
+            retrieval_key_states, retrieval_value_states = (
+                self.get_last_retrieval_block(
+                    retrieval_key_states,
+                    retrieval_value_states,
+                    pad_start_positions=pad_start_positions,
+                )
+            )
 
         # Append retrieval blocks to the key and value states
         if retrieval_key_states is not None:
             key_states = torch.cat([retrieval_key_states, key_states], dim=2)
             value_states = torch.cat([retrieval_value_states, value_states], dim=2)
 
-        # Conduct flex attention if there is retrieval data
-        if self.use_flex_attention(input_length, retrieval_key_states):
+        if retrieval_key_states is not None and not is_using_kv_cache:
+            # Conduct flex attention if we need causal retrieval block attention
             retrieval_block_num = (
-                retrieval_key_states.shape[2] // self.retrieval_block_size
+                retrieval_key_states.shape[2] // self.config.retrieval_block_size
             )
             attn_output, attn_weights = self.safe_flex_attention(
-                input_length,
-                retrieval_block_num,
-                query_states,
-                key_states,
-                value_states,
+                query_states=query_states,
+                key_states=key_states,
+                value_states=value_states,
+                input_length=input_length,
+                retrieval_block_num=retrieval_block_num,
             )
         else:
             attention_interface: Callable = self.get_attention_interface(
@@ -204,23 +207,14 @@ class ReLlamaAttention(torch.nn.Module):
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 
-    def use_flex_attention(
-        self,
-        input_length: int,
-        retrieval_key_states: Union[torch.Tensor, None],
-    ) -> bool:
-        """
-        Use flex attention when there is retrieval data and the input length is greater than the input chunk size.
-        If the input length is less than the input chunk size, we don't need specific attention mask
-        """
-        return (
-            retrieval_key_states is not None
-            and input_length > self.config.input_chunk_size
-        )
-
     def safe_flex_attention(
-        self, input_length, retrieval_block_num, query_states, key_states, value_states
-    ):
+        self,
+        query_states: torch.Tensor,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        input_length: int,
+        retrieval_block_num: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Check if the input length is greater than FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
         need_input_preprocess = (
             is_torch_compile_possible()
@@ -265,3 +259,44 @@ class ReLlamaAttention(torch.nn.Module):
             attn_output = attn_output[:, :, :original_input_length, :]
 
         return attn_output, None
+
+    def get_last_retrieval_block(
+        self,
+        retrieval_key_states: torch.Tensor,
+        retrieval_value_states: torch.Tensor,
+        pad_start_positions: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        selected_retrieval_key_states: List[torch.Tensor] = []
+        selected_retrieval_value_states: List[torch.Tensor] = []
+        # Find out the last retrieval block index range
+        for b_idx, pad_start_position in enumerate(pad_start_positions):
+            retrieval_block_idx = pad_start_position // self.config.input_chunk_size - 1
+
+            # Handle the case where there is no retrieval block, we just use the first retrieval block as padding
+            block_start_idx = max(
+                0, retrieval_block_idx * self.config.retrieval_block_size
+            )
+            # Handle the case where we actually need a new retrieval block
+            # Instead of using the new retrieval block, we use the last retrieval block for efficiency
+            block_start_idx = min(
+                block_start_idx,
+                retrieval_key_states.shape[2] - self.config.retrieval_block_size,
+            )
+            # Find the end index of the retrieval block
+            block_end_idx = block_start_idx + self.config.retrieval_block_size
+
+            # Use only the last retrieval block if we are using past key and value states
+            # Other retrieval blocks are already used and is not needed for the current step
+            selected_retrieval_key_states.append(
+                retrieval_key_states[b_idx, :, block_start_idx:block_end_idx, :]
+            )
+            selected_retrieval_value_states.append(
+                retrieval_value_states[b_idx, :, block_start_idx:block_end_idx, :]
+            )
+
+        # Concatenate the selected retrieval key and value states
+        selected_retrieval_key_states = torch.stack(selected_retrieval_key_states)
+        selected_retrieval_value_states = torch.stack(selected_retrieval_value_states)
+
+        # Return the selected retrieval key and value states
+        return selected_retrieval_key_states, selected_retrieval_value_states

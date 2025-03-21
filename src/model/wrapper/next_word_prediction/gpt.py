@@ -8,7 +8,9 @@ from src.model.wrapper.next_word_prediction.state import State
 
 
 class NextWordPredictorForGPT(NextWordPredictor):
-    def call_model(self, state: State) -> Tuple[torch.Tensor, DynamicCache]:
+    def call_model(
+        self, state: State
+    ) -> Tuple[torch.Tensor, Tuple[DynamicCache, None]]:
         """GPT does not support pad_start_positions.
         We need to call it one-by-one for each instance in the batch.
         """
@@ -34,4 +36,4 @@ class NextWordPredictorForGPT(NextWordPredictor):
             all_logits.append(outputs.logits.squeeze(0))
             all_past_key_values.append(outputs.past_key_values)
 
-        return all_logits, all_past_key_values
+        return all_logits, (all_past_key_values, None)

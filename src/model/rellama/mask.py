@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, List, Optional
 
 import torch
 
@@ -96,7 +96,7 @@ def generate_causal_retrieval_mask_mod(
     # Smaller input length will cause error with torch compile
     assert (
         not is_torch_compile_possible()
-        or  input_length >= FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
+        or input_length >= FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE
     ), f"input_length must be greater than or equal to {FLEX_ATT_TORCH_COMPILE_MIN_BLOCK_SIZE}, but got {input_length}"
 
     # Calculate where the actual input starts (after all retrieval blocks)
@@ -113,6 +113,11 @@ def generate_causal_retrieval_mask_mod(
 
     def causal_retrieval_mask_mod(b, h, q_idx, kv_idx):
         """
+        b: batch index
+        h: head index
+        q_idx: query position index
+        kv_idx: key position index
+
         Generate the attention mask for a specific query-key pair.
 
         This function is called by PyTorch's attention mechanism for each position.

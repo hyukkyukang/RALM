@@ -112,9 +112,7 @@ class LightningModule(L.LightningModule):
             raise ValueError(f"Model name {self.cfg.model.name} not supported")
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
-        if self.cfg.training.get(
-            "use_torch_compile", self.cfg.get("use_torch_compile", False)
-        ):
+        if self.cfg.get("use_torch_compile", False):
             if is_torch_compile_possible():
                 log_if_rank_zero(
                     logger,

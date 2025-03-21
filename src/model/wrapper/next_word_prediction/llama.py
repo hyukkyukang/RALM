@@ -8,7 +8,9 @@ from src.model.wrapper.next_word_prediction.state import State
 
 
 class NextWordPredictorForLlama(NextWordPredictor):
-    def call_model(self, state: State) -> Tuple[torch.Tensor, DynamicCache]:
+    def call_model(
+        self, state: State
+    ) -> Tuple[torch.Tensor, Tuple[DynamicCache, None]]:
         outputs = self.model(
             state.current_input_ids,
             pad_start_positions=state.pad_start_positions,
@@ -16,4 +18,7 @@ class NextWordPredictorForLlama(NextWordPredictor):
             position_ids=state.position_ids,
             use_cache=True,
         )
-        return outputs.logits, outputs.past_key_values
+        return (
+            outputs.logits,
+            (outputs.past_key_values, None),
+        )

@@ -224,7 +224,7 @@ class ReLlama(ReLlamaPreTrainedModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
-        retrieval_key_values: Optional[Cache] = None,
+        retrieval_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -290,7 +290,7 @@ class ReLlama(ReLlamaPreTrainedModel):
                 position_ids, device=inputs_embeds.device
             ).unsqueeze(1)
 
-        causal_mask = self._update_causal_mask(
+        attention_mask = self._update_causal_mask(
             attention_mask,
             inputs_embeds,
             cache_position,
@@ -299,30 +299,57 @@ class ReLlama(ReLlamaPreTrainedModel):
         )
         assert (
             attention_mask is None
-        ), f"Expect causal_mask to be None here. Have not checked if it's okay to have it non-None."
+        ), f"Expect attention_mask to be None here. Have not checked if it's okay to have it non-None."
         # Create custom attention mask if:
         # 1. position_ids is different across the batch
         # 2. position_ids is not equal to cache_position
         if (not torch.all(torch.eq(position_ids, position_ids[0]))) or (
             not torch.equal(position_ids[0], cache_position)
         ):
+            bsize, q_len, dim = inputs_embeds.shape
+
             # We expect only one token is given for the query.
             # If not, we need to fix the below attention mask.
             assert (
-                inputs_embeds.shape[1] == 1
+                q_len == 1
             ), f"Expect inputs_embeds to have shape [bsz, 1, ...] but got {inputs_embeds.shape}"
+
+            assert (
+                retrieval_key_values is not None
+            ), "Expect retrieval_key_values to be provided when position_ids is not equal to cache_position"
+            # Compute the kv position for appending retrieval data
+            retrieval_data_length = retrieval_key_values[0][0].shape[2]
+
+            # Add 1 for the current query token.
+            # This is going to be appended in the attention module.
+            kv_positions = retrieval_data_length + cache_position.item() + q_len
 
             # Create custom attention mask
             attention_mask = torch.ones(
-                inputs_embeds.shape[0],
-                1,
-                cache_position.item() + 1,
+                bsize,
+                q_len,
+                kv_positions,
                 device=inputs_embeds.device,
                 dtype=inputs_embeds.dtype,
             )
-            # Mask out the positions after the position_ids
+
+            # Mask out the padding on the retrieval data side
             for b_idx, position_id in enumerate(position_ids):
-                attention_mask[b_idx, :, position_id + 1 :] = float("-inf")
+                # Find the start and end of the retrieval block for padding
+                padding_block_idx = position_id // self.config.retrieval_block_size
+                padding_block_start_idx = (
+                    padding_block_idx * self.config.retrieval_block_size
+                )
+                # Mask out all the padding block until the retrieval data
+                attention_mask[
+                    b_idx, :, padding_block_start_idx:retrieval_data_length
+                ] = float("-inf")
+
+            # Mask out the padding on the input token side
+            for b_idx, position_id in enumerate(position_ids):
+                attention_mask[
+                    b_idx, :, retrieval_data_length + position_id + q_len :
+                ] = float("-inf")
 
             # Reshape the attention mask to be 4D
             attention_mask = attention_mask.unsqueeze(1).expand(
@@ -346,7 +373,7 @@ class ReLlama(ReLlamaPreTrainedModel):
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
-                    causal_mask,
+                    attention_mask,
                     position_ids,
                     past_key_values,
                     retrieval_key_values,
@@ -359,7 +386,7 @@ class ReLlama(ReLlamaPreTrainedModel):
             else:
                 layer_outputs = decoder_layer(
                     hidden_states,
-                    attention_mask=causal_mask,
+                    attention_mask=attention_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     retrieval_key_value=retrieval_key_values,
@@ -367,7 +394,8 @@ class ReLlama(ReLlamaPreTrainedModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
-                    pad_start_positions=pad_start_positions**flash_attn_kwargs,
+                    pad_start_positions=pad_start_positions,
+                    **flash_attn_kwargs,
                 )
 
             hidden_states = layer_outputs[0]

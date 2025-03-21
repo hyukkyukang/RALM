@@ -12,7 +12,7 @@ from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.wrapper.next_word_prediction.state import State
 
 
-class NextWordPredictor:
+class NextWordPredictor(abc.ABC):
     def __init__(
         self,
         model: Union[AutoModelForCausalLM, LlamaForCausalLM, ReLlamaForCausalLM],
@@ -26,7 +26,9 @@ class NextWordPredictor:
         self.topk = topk
 
     @abc.abstractmethod
-    def call_model(self, state: State) -> Tuple[torch.Tensor, DynamicCache]:
+    def call_model(
+        self, state: State
+    ) -> Tuple[torch.Tensor, Tuple[DynamicCache, Optional[torch.Tensor]]]:
         raise NotImplementedError("This method should be implemented by the subclass.")
 
     def predict(
@@ -60,7 +62,7 @@ class NextWordPredictor:
         # Predict step by step
         for step_idx in range(self.steps_to_predict):
             # Call the model and get the logits and past key values
-            logits, past_key_values = self.call_model(state)
+            logits, (past_key_values, retrieval_key_values) = self.call_model(state)
 
             # Get topk candidates
             topk_candidates: List[List[int]] = self.get_topk_candidates(
@@ -76,6 +78,7 @@ class NextWordPredictor:
             state = self.update_state(
                 state=state,
                 past_key_values=past_key_values,
+                retrieval_key_values=retrieval_key_values,
                 selected_token_ids=selected_token_ids,
                 step_idx=step_idx,
             )
@@ -88,6 +91,7 @@ class NextWordPredictor:
         state: State,
         step_idx: int,
         past_key_values: DynamicCache,
+        retrieval_key_values: Optional[torch.Tensor],
         selected_token_ids: List[List[int]],
     ) -> State:
         bsize = len(selected_token_ids)
@@ -96,7 +100,7 @@ class NextWordPredictor:
         state.current_input_ids = torch.tensor(selected_token_ids).to(self.model.device)
         state.past_key_values = past_key_values
         state.position_ids = state.pad_start_positions
-
+        state.retrieval_key_values = retrieval_key_values
         # Increment the pad start positions
         if step_idx > 0:
             state.pad_start_positions = [item + 1 for item in state.pad_start_positions]

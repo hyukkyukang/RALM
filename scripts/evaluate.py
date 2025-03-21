@@ -14,11 +14,12 @@ from omegaconf import DictConfig
 
 from src.dataset import DataModule
 from src.model import LightningModule
-from src.utils import add_config, log_if_rank_zero, overwrite_config
+from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("Evaluation")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+torch._dynamo.config.cache_size_limit = 10000
 
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
