@@ -11,11 +11,12 @@ import torch
 import tqdm
 from omegaconf import DictConfig
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-from transformers.modeling_flash_attention_utils import \
-    _flash_attention_forward
+from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
-from src.model.rellama.mask import (generate_causal_mask_mod,
-                                    generate_causal_retrieval_mask_mod)
+from src.model.rellama.mask import (
+    generate_causal_mask_mod,
+    generate_causal_retrieval_mask_mod,
+)
 
 logger = logging.getLogger("ATTENTION")
 
@@ -28,6 +29,7 @@ if torch.cuda.get_device_capability() >= (8, 0):
     torch.set_float32_matmul_precision("high")
     # Decrease the tolerance if using precision high
     TOLERANCE = 1e-2
+
 
 def get_causal_block_mask(
     input_length: int,
@@ -78,21 +80,28 @@ def get_causal_retrieval_block_mask(
 
     return block_mask
 
+
 @functools.lru_cache(maxsize=None)
-def create_custom_causal_retrieval_block_mask(q_len: int,
-                                            k_len: int,
-                                            chunk_size: int,
-                                            retrieval_block_size: int,
-                                            device: torch.device = torch.device("cpu")) -> torch.Tensor:
+def create_custom_causal_retrieval_block_mask(
+    q_len: int,
+    k_len: int,
+    chunk_size: int,
+    retrieval_block_size: int,
+    device: torch.device = torch.device("cpu"),
+) -> torch.Tensor:
     """Create a custom causal retrieval block mask"""
     retrieval_block_len = k_len - q_len
     retrieval_block_num = retrieval_block_len // retrieval_block_size
 
     # Create attention mask
-    causal_mask = torch.tril(torch.ones((q_len, q_len), device=device, dtype=torch.bool))
-    retrieval_block_mask = torch.zeros((q_len, retrieval_block_len), device=device, dtype=torch.bool)
+    causal_mask = torch.tril(
+        torch.ones((q_len, q_len), device=device, dtype=torch.bool)
+    )
+    retrieval_block_mask = torch.zeros(
+        (q_len, retrieval_block_len), device=device, dtype=torch.bool
+    )
     for i in range(retrieval_block_num):
-        q_start = (i+1) * chunk_size
+        q_start = (i + 1) * chunk_size
         q_end = q_start + chunk_size
         k_start = i * retrieval_block_size
         k_end = k_start + retrieval_block_size
@@ -100,24 +109,31 @@ def create_custom_causal_retrieval_block_mask(q_len: int,
     attention_mask = torch.cat([retrieval_block_mask, causal_mask], dim=1)
     return attention_mask
 
-def custom_causal_retrieval_block_attention(query: torch.Tensor, 
-                                            key: torch.Tensor, 
-                                            value: torch.Tensor, 
-                                            scale: float, 
-                                            chunk_size: int,
-                                            retrieval_block_size: int,
-                                            draw_attention_mask: bool = False):
+
+def custom_causal_retrieval_block_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    scale: float,
+    chunk_size: int,
+    retrieval_block_size: int,
+    draw_attention_mask: bool = False,
+):
     """Implements custom causal retrieval block attention"""
     bsz, nhead, q_len, head_dim = query.shape
     _, kv_nhead, k_len, _ = key.shape
 
-    attention_mask = create_custom_causal_retrieval_block_mask(q_len, k_len, chunk_size, retrieval_block_size, query.device)
+    attention_mask = create_custom_causal_retrieval_block_mask(
+        q_len, k_len, chunk_size, retrieval_block_size, query.device
+    )
 
     if draw_attention_mask:
         visualize_attention_mask(attention_mask)
 
     # Inverse the mask to use in the scaled dot product attention
-    attn_mask = attention_mask.float().masked_fill(attention_mask.logical_not(), float("-inf"))
+    attn_mask = attention_mask.float().masked_fill(
+        attention_mask.logical_not(), float("-inf")
+    )
 
     # Handle case where kv_nhead != nhead (GQA)
     if kv_nhead != nhead:
@@ -227,7 +243,9 @@ def compare_speed_with_and_without_torch_compile(
     # Warm-up
     output1 = f1(*args, **kwargs)
     output2 = f2(*args, **kwargs)
-    assert torch.allclose(output1, output2, atol=TOLERANCE), f"Compiled and non-compiled {prefix} are not close to each other"
+    assert torch.allclose(
+        output1, output2, atol=TOLERANCE
+    ), f"Compiled and non-compiled {prefix} are not close to each other"
 
     # Measure without compilation
     time_no_compile = []
@@ -297,6 +315,7 @@ def find_differing_elements(
 
     return results
 
+
 def visualize_attention_mask(attention_mask: torch.Tensor) -> None:
     """Visualize the attention mask"""
     # Convert to numpy for visualization
@@ -304,20 +323,29 @@ def visualize_attention_mask(attention_mask: torch.Tensor) -> None:
 
     # Plot the attention mask
     plt.figure(figsize=(8, 8))
-    plt.imshow(mask_np, cmap='gray_r', aspect='auto')
+    plt.imshow(mask_np, cmap="gray_r", aspect="auto")
     plt.xlabel("Key Position")
     plt.ylabel("Query Position")
     plt.title("Custom Causal Retrieval Block Attention Mask")
-    plt.colorbar(label='Mask Value')
-    
+    plt.colorbar(label="Mask Value")
+
     # Save the image
-    save_path="attention_mask.png"
+    save_path = "attention_mask.png"
     plt.savefig(save_path, dpi=300)
     plt.close()
 
-def compare_causal_attentions(query, key, value, scale, enable_gqa, causal_mask, causal_retrieval_block_mask_wo_retrieval):
+
+def compare_causal_attentions(
+    query,
+    key,
+    value,
+    scale,
+    enable_gqa,
+    causal_mask,
+    causal_retrieval_block_mask_wo_retrieval,
+):
     """Compare different implementations of the causal attentions"""
-    
+
     # 1. Custom causal attention
     custom_causal_attention_output = compare_speed_with_and_without_torch_compile(
         "Custom causal attention",
@@ -327,7 +355,7 @@ def compare_causal_attentions(query, key, value, scale, enable_gqa, causal_mask,
         value,
         scale=scale,
     )
-    
+
     # 2. Torch causal attention
     torch_causal_attention_output = compare_speed_with_and_without_torch_compile(
         "Torch causal attention",
@@ -336,24 +364,36 @@ def compare_causal_attentions(query, key, value, scale, enable_gqa, causal_mask,
         key,
         value,
     )
-    
+
     # 3. Flex attention with causal block mask
-    flex_attention_with_causal_block_mask_output = compare_speed_with_and_without_torch_compile(
-        "Flex attention with causal block mask",
-        flex_attention,
-        query,
-        key,
-        value,
-        block_mask=causal_mask, scale=scale, enable_gqa=enable_gqa, return_lse=False)
-    
+    flex_attention_with_causal_block_mask_output = (
+        compare_speed_with_and_without_torch_compile(
+            "Flex attention with causal block mask",
+            flex_attention,
+            query,
+            key,
+            value,
+            block_mask=causal_mask,
+            scale=scale,
+            enable_gqa=enable_gqa,
+            return_lse=False,
+        )
+    )
+
     # 4. Flex attention with causal retrieval block mask without retrieval
-    flex_attention_with_causal_retrieval_block_mask_wo_retrieval_output = compare_speed_with_and_without_torch_compile(
-        "Flex attention with causal retrieval block mask without retrieval",
-        flex_attention,
-        query,
-        key,
-        value,
-        block_mask=causal_retrieval_block_mask_wo_retrieval, scale=scale, enable_gqa=enable_gqa, return_lse=False)
+    flex_attention_with_causal_retrieval_block_mask_wo_retrieval_output = (
+        compare_speed_with_and_without_torch_compile(
+            "Flex attention with causal retrieval block mask without retrieval",
+            flex_attention,
+            query,
+            key,
+            value,
+            block_mask=causal_retrieval_block_mask_wo_retrieval,
+            scale=scale,
+            enable_gqa=enable_gqa,
+            return_lse=False,
+        )
+    )
 
     # 5. Flash attention-2
     if torch.cuda.get_device_capability() >= (8, 0):
@@ -365,66 +405,105 @@ def compare_causal_attentions(query, key, value, scale, enable_gqa, causal_mask,
             value,
             scaling=scale,
         )
-    
+
     # Compare all the outputs
-    assert torch.allclose(custom_causal_attention_output, torch_causal_attention_output, atol=TOLERANCE), "Custom causal attention and torch causal attention are not close to each other"
-    assert torch.allclose(custom_causal_attention_output, flex_attention_with_causal_block_mask_output, atol=TOLERANCE), "Custom causal attention and flex attention with causal block mask are not close to each other"
-    assert torch.allclose(custom_causal_attention_output, flex_attention_with_causal_retrieval_block_mask_wo_retrieval_output, atol=TOLERANCE), "Custom causal attention and flex attention with causal retrieval block mask without retrieval are not close to each other"
+    assert torch.allclose(
+        custom_causal_attention_output, torch_causal_attention_output, atol=TOLERANCE
+    ), "Custom causal attention and torch causal attention are not close to each other"
+    assert torch.allclose(
+        custom_causal_attention_output,
+        flex_attention_with_causal_block_mask_output,
+        atol=TOLERANCE,
+    ), "Custom causal attention and flex attention with causal block mask are not close to each other"
+    assert torch.allclose(
+        custom_causal_attention_output,
+        flex_attention_with_causal_retrieval_block_mask_wo_retrieval_output,
+        atol=TOLERANCE,
+    ), "Custom causal attention and flex attention with causal retrieval block mask without retrieval are not close to each other"
     # if torch.cuda.get_device_capability() >= (8, 0):
     #     assert torch.allclose(custom_causal_attention_output.to(flash_attention_2_output.dtype), flash_attention_2_output, atol=TOLERANCE), "Custom causal attention and flash attention-2 are not close to each other"
-    
+
     return None
-    
-def compare_causal_retrieval_block_attention(query, key, value, scale, enable_gqa, chunk_size, retrieval_block_size, causal_retrieval_block_mask):
+
+
+def compare_causal_retrieval_block_attention(
+    query,
+    key,
+    value,
+    scale,
+    enable_gqa,
+    chunk_size,
+    retrieval_block_size,
+    causal_retrieval_block_mask,
+):
     """Compare different implementations of the causal retrieval block attention"""
 
     # 1. Custom causal retrieval block attention
-    custom_causal_retrieval_block_attention_output = compare_speed_with_and_without_torch_compile(
-        "Custom causal retrieval block attention",
-        custom_causal_retrieval_block_attention,
-        query,
-        key,
-        value,
-        scale=scale,
-        chunk_size=chunk_size,
-        retrieval_block_size=retrieval_block_size,
+    custom_causal_retrieval_block_attention_output = (
+        compare_speed_with_and_without_torch_compile(
+            "Custom causal retrieval block attention",
+            custom_causal_retrieval_block_attention,
+            query,
+            key,
+            value,
+            scale=scale,
+            chunk_size=chunk_size,
+            retrieval_block_size=retrieval_block_size,
+        )
     )
 
     # 2. Flex attention with causal retrieval block mask
-    flex_attention_with_causal_retrieval_block_mask_output = compare_speed_with_and_without_torch_compile(
-        "Flex attention with causal retrieval block mask",
-        flex_attention,
-        query,
-        key,
-        value,
-        block_mask=causal_retrieval_block_mask, scale=scale, enable_gqa=enable_gqa, return_lse=False) 
-
-    # 3. Flex attention without block mask
-    flex_attention_without_block_mask_output = compare_speed_with_and_without_torch_compile(
-        "Flex attention without block mask",
-        flex_attention,
-        query,
-        key,
-        value,
-        block_mask=None,
-        scale=scale,
-        enable_gqa=enable_gqa,
-        return_lse=False,
+    flex_attention_with_causal_retrieval_block_mask_output = (
+        compare_speed_with_and_without_torch_compile(
+            "Flex attention with causal retrieval block mask",
+            flex_attention,
+            query,
+            key,
+            value,
+            block_mask=causal_retrieval_block_mask,
+            scale=scale,
+            enable_gqa=enable_gqa,
+            return_lse=False,
+        )
     )
 
-    assert torch.allclose(custom_causal_retrieval_block_attention_output, flex_attention_with_causal_retrieval_block_mask_output, atol=TOLERANCE), "Flex attention with causal retrieval block mask and custom causal retrieval block attention are not close to each other"
-    assert not torch.allclose(custom_causal_retrieval_block_attention_output, flex_attention_without_block_mask_output, atol=TOLERANCE), "Custom causal retrieval block attention and flex attention without block mask are close to each other"
+    # 3. Flex attention without block mask
+    flex_attention_without_block_mask_output = (
+        compare_speed_with_and_without_torch_compile(
+            "Flex attention without block mask",
+            flex_attention,
+            query,
+            key,
+            value,
+            block_mask=None,
+            scale=scale,
+            enable_gqa=enable_gqa,
+            return_lse=False,
+        )
+    )
+
+    assert torch.allclose(
+        custom_causal_retrieval_block_attention_output,
+        flex_attention_with_causal_retrieval_block_mask_output,
+        atol=TOLERANCE,
+    ), "Flex attention with causal retrieval block mask and custom causal retrieval block attention are not close to each other"
+    assert not torch.allclose(
+        custom_causal_retrieval_block_attention_output,
+        flex_attention_without_block_mask_output,
+        atol=TOLERANCE,
+    ), "Custom causal retrieval block attention and flex attention without block mask are close to each other"
 
     return None
+
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Configs
     # Model architecture parameters
     bsize = 48
-    total_dim = cfg.model.architecture.hidden_size
-    nhead = cfg.model.architecture.num_attention_heads
-    kv_nhead = cfg.model.architecture.num_key_value_heads
+    total_dim = cfg.architecture[cfg.model.architecture].hidden_size
+    nhead = cfg.architecture[cfg.model.architecture].num_attention_heads
+    kv_nhead = cfg.architecture[cfg.model.architecture].num_key_value_heads
     head_dim = total_dim // nhead
     enable_gqa = kv_nhead != nhead  # Group Query Attention
 
@@ -496,8 +575,25 @@ def main(cfg: DictConfig) -> None:
         device=device,
     )
 
-    compare_causal_attentions(query, key[:, :, -input_length:, :], value[:, :, -input_length:, :], scale, enable_gqa, causal_mask, causal_retrieval_block_mask_without_retrieval)
-    compare_causal_retrieval_block_attention(query, key, value, scale, enable_gqa, chunk_size, retrieval_block_size, causal_retrieval_block_mask)
+    compare_causal_attentions(
+        query,
+        key[:, :, -input_length:, :],
+        value[:, :, -input_length:, :],
+        scale,
+        enable_gqa,
+        causal_mask,
+        causal_retrieval_block_mask_without_retrieval,
+    )
+    compare_causal_retrieval_block_attention(
+        query,
+        key,
+        value,
+        scale,
+        enable_gqa,
+        chunk_size,
+        retrieval_block_size,
+        causal_retrieval_block_mask,
+    )
 
     return None
 

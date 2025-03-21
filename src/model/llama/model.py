@@ -283,6 +283,7 @@ class Llama(LlamaPreTrainedModel):
             past_key_values,
             output_attentions,
         )
+        stop = 1
         assert (
             attention_mask is None
         ), f"Expect causal_mask to be None here. Have not checked if it's okay to have it non-None."
@@ -390,15 +391,21 @@ def get_customized_llama_config(
     llama_config.pad_token_id = tokenizer.pad_token_id
     llama_config.bos_token_id = tokenizer.bos_token_id
     llama_config.eos_token_id = tokenizer.eos_token_id
-    llama_config.num_attention_heads = cfg.model.architecture.num_attention_heads
-    llama_config.num_key_value_heads = cfg.model.architecture.num_key_value_heads
-    llama_config.hidden_size = cfg.model.architecture.hidden_size
+    llama_config.num_attention_heads = cfg.architecture[
+        cfg.model.architecture
+    ].num_attention_heads
+    llama_config.num_key_value_heads = cfg.architecture[
+        cfg.model.architecture
+    ].num_key_value_heads
+    llama_config.hidden_size = cfg.architecture[cfg.model.architecture].hidden_size
     assert (
         llama_config.hidden_size % llama_config.num_attention_heads == 0
     ), "hidden_size must be divisible by num_attention_heads"
     llama_config.head_dim = llama_config.hidden_size // llama_config.num_attention_heads
-    llama_config.intermediate_size = cfg.model.architecture.intermediate_size
-    llama_config.num_hidden_layers = cfg.model.architecture.layers
+    llama_config.intermediate_size = cfg.architecture[
+        cfg.model.architecture
+    ].intermediate_size
+    llama_config.num_hidden_layers = cfg.architecture[cfg.model.architecture].layers
     llama_config.max_position_embeddings = cfg.model.max_length
     llama_config.torch_dtype = torch.float32
     llama_config.use_cache = False

@@ -294,8 +294,13 @@ class LightningModule(L.LightningModule):
             log_dic = {"LWP_lambada_acc": accuracy}
         elif val_dataset_name in ["wikitext", "curation"]:
             # Next token prediction
-            loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
-                batch
+            loss_sum, valid_tokens_cnt = evaluate_next_token_prediction(
+                token_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=batch["labels"],
+                model=self.uncompiled_model,
+                retrieved_input_ids=batch["retrieved_input_ids"],
+                num_retrieval_blocks=batch["num_retrieval_blocks"],
             )
             # Compute perplexity and bpb
             perplexity, bpb = compute_perplexity_and_bpb(

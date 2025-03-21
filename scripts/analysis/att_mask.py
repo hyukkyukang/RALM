@@ -25,10 +25,10 @@ def main(cfg: DictConfig) -> None:
         device (str): Device to use for computation. Defaults to "cpu".
     """
     bsize = 1
-    total_dim = cfg.model.architecture.hidden_size
-    nhead = cfg.model.architecture.num_attention_heads
+    total_dim = cfg.architecture[cfg.model.architecture].hidden_size
+    nhead = cfg.architecture[cfg.model.architecture].num_attention_heads
     input_length = cfg.model.max_length
-    kv_nhead = cfg.model.architecture.num_key_value_heads
+    kv_nhead = cfg.architecture[cfg.model.architecture].num_key_value_heads
     head_dim = total_dim // nhead
     chunk_size = cfg.model.input_chunk_size
     num_chunks_per_block = cfg.model.retrieval_chunk_num
@@ -77,7 +77,7 @@ def main(cfg: DictConfig) -> None:
         device=device,
         name="causal_retrieval_block_mask_without_retrieval",
     )
-    
+
     # Get causal mask
     causal_mask = generate_causal_mask_mod(
         query_length=input_length,
