@@ -297,68 +297,13 @@ class ReLlama(ReLlamaPreTrainedModel):
             past_key_values,
             output_attentions,
         )
-        if attention_mask is None:
-            # Create custom attention mask if:
-            # 1. position_ids is different across the batch
-            # 2. position_ids is not equal to cache_position
-            if (not torch.all(torch.eq(position_ids, position_ids[0]))) or (
-                not torch.equal(position_ids[0], cache_position)
-            ):
-                bsize, q_len, dim = inputs_embeds.shape
-
-                # We expect only one token is given for the query.
-                # If not, we need to fix the below attention mask.
-                assert (
-                    q_len == 1
-                ), f"Expect inputs_embeds to have shape [bsz, 1, ...] but got {inputs_embeds.shape}"
-
-                if retrieval_key_values is None:
-                    retrieval_data_length = 0
-                else:
-                    retrieval_data_length = retrieval_key_values[0][0].shape[2]
-
-                # Compute the kv position for appending retrieval data
-                # Add 1 for the current query token, which is going to be appended in the attention module.
-                kv_positions = retrieval_data_length + cache_position.item() + q_len
-
-                # Create custom attention mask
-                attention_mask = torch.ones(
-                    bsize,
-                    q_len,
-                    kv_positions,
-                    device=inputs_embeds.device,
-                    dtype=inputs_embeds.dtype,
-                )
-
-                # Mask out the padding on the retrieval data side
-                if retrieval_key_values is not None:
-                    for b_idx, position_id in enumerate(position_ids):
-                        # Find the start and end of the retrieval block for padding
-                        padding_block_idx = (
-                            position_id // self.config.retrieval_block_size
-                        )
-                        padding_block_start_idx = (
-                            padding_block_idx * self.config.retrieval_block_size
-                        )
-                        # Mask out all the padding block until the retrieval data
-                        attention_mask[
-                            b_idx, :, padding_block_start_idx:retrieval_data_length
-                        ] = float("-inf")
-
-                # Mask out the padding on the input token side
-                for b_idx, position_id in enumerate(position_ids):
-                    attention_mask[
-                        b_idx, :, retrieval_data_length + position_id + q_len :
-                    ] = float("-inf")
-
-                # Reshape the attention mask to be 4D
-                attention_mask = attention_mask.unsqueeze(1).expand(
-                    -1, self.config.num_attention_heads, -1, -1
-                )
-        else:
-            assert torch.all(
-                torch.eq(position_ids, position_ids[0])
-            ), "position_ids must be the same across the batch"
+        attention_mask = self.get_attention_mask(
+            attention_mask,
+            inputs_embeds,
+            cache_position,
+            position_ids,
+            retrieval_key_values,
+        )
 
         hidden_states = inputs_embeds
 
@@ -420,6 +365,81 @@ class ReLlama(ReLlamaPreTrainedModel):
             attentions=all_self_attns,
         )
         return output if return_dict else output.to_tuple()
+
+    @torch.compiler.disable()
+    def get_attention_mask(
+        self,
+        attention_mask: Optional[torch.Tensor],
+        inputs_embeds: torch.FloatTensor,
+        cache_position: torch.LongTensor,
+        position_ids: torch.LongTensor,
+        retrieval_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    ) -> torch.Tensor:
+        if attention_mask is None:
+            # Create custom attention mask if:
+            # 1. position_ids is different across the batch
+            # 2. position_ids is not equal to cache_position
+            if (not torch.all(torch.eq(position_ids, position_ids[0]))) or (
+                not torch.equal(position_ids[0], cache_position)
+            ):
+                bsize, q_len, dim = inputs_embeds.shape
+
+                # We expect only one token is given for the query.
+                # If not, we need to fix the below attention mask.
+                assert (
+                    q_len == 1
+                ), f"Expect inputs_embeds to have shape [bsz, 1, ...] but got {inputs_embeds.shape}"
+
+                if retrieval_key_values is None:
+                    retrieval_data_length = 0
+                else:
+                    retrieval_data_length = retrieval_key_values[0][0].shape[2]
+
+                # Compute the kv position for appending retrieval data
+                # Add 1 for the current query token, which is going to be appended in the attention module.
+                kv_positions = retrieval_data_length + cache_position.item() + q_len
+
+                # Create custom attention mask
+                attention_mask = torch.ones(
+                    bsize,
+                    q_len,
+                    kv_positions,
+                    device=inputs_embeds.device,
+                    dtype=inputs_embeds.dtype,
+                )
+
+                # Mask out the padding on the retrieval data side
+                if retrieval_key_values is not None:
+                    for b_idx, position_id in enumerate(position_ids):
+                        # Find the start and end of the retrieval block for padding
+                        padding_block_idx = (
+                            position_id // self.config.retrieval_block_size
+                        )
+                        padding_block_start_idx = (
+                            padding_block_idx * self.config.retrieval_block_size
+                        )
+                        # Mask out all the padding block until the retrieval data
+                        attention_mask[
+                            b_idx, :, padding_block_start_idx:retrieval_data_length
+                        ] = float("-inf")
+
+                # Mask out the padding on the input token side
+                for b_idx, position_id in enumerate(position_ids):
+                    attention_mask[
+                        b_idx, :, retrieval_data_length + position_id + q_len :
+                    ] = float("-inf")
+
+                # Reshape the attention mask to be 4D
+                attention_mask = attention_mask.unsqueeze(1).expand(
+                    -1, self.config.num_attention_heads, -1, -1
+                )
+        else:
+            pass
+            # We comment out this for efficiency
+            # assert torch.all(
+            #     torch.eq(position_ids, position_ids[0])
+            # ), "position_ids must be the same across the batch"
+        return attention_mask
 
 
 def get_customized_llama_config(
