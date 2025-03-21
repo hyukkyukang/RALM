@@ -288,6 +288,7 @@ class LightningModule(L.LightningModule):
                 tokenizer=self.tokenizer,
                 batch_token_ids=batch["input_ids"],
                 target_last_words=batch["last_word"],
+                pad_start_positions=batch["pad_start_positions"],
                 retrieved_input_ids=batch["retrieved_input_ids"],
                 num_retrieval_blocks=batch["num_retrieval_blocks"],
             )
