@@ -257,6 +257,9 @@ class ReLlamaAttention(torch.nn.Module):
         if need_input_preprocess:
             attn_output = attn_output[:, :, :original_input_length, :]
 
+        # Format the output
+        attn_output = attn_output.transpose(1, 2)
+
         return attn_output, None
 
     def get_last_retrieval_block(
