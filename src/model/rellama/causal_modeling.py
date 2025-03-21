@@ -80,7 +80,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        pad_start_positions: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[List[int]] = None,
         num_logits_to_keep: int = 0,
         num_retrieval_blocks: Optional[List[int]] = None,
         **kwargs: KwargsForCausalLM,

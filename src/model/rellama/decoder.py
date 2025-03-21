@@ -38,7 +38,7 @@ class ReLlamaDecoderLayer(torch.nn.Module):
         position_embeddings: Optional[
             Tuple[torch.Tensor, torch.Tensor]
         ] = None,  # necessary, but kept here for BC
-        pad_start_positions: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[List[int]] = None,
         **kwargs: FlashAttentionKwargs,
     ) -> Tuple[
         torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]

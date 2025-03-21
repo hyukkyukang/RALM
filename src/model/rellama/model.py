@@ -231,7 +231,7 @@ class ReLlama(ReLlamaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        pad_start_positions: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[List[int]] = None,
         is_retrieval: Optional[bool] = False,
         **flash_attn_kwargs: FlashAttentionKwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
@@ -314,14 +314,13 @@ class ReLlama(ReLlamaPreTrainedModel):
                 q_len == 1
             ), f"Expect inputs_embeds to have shape [bsz, 1, ...] but got {inputs_embeds.shape}"
 
-            assert (
-                retrieval_key_values is not None
-            ), "Expect retrieval_key_values to be provided when position_ids is not equal to cache_position"
-            # Compute the kv position for appending retrieval data
-            retrieval_data_length = retrieval_key_values[0][0].shape[2]
+            if retrieval_key_values is None:
+                retrieval_data_length = 0
+            else:
+                retrieval_data_length = retrieval_key_values[0][0].shape[2]
 
-            # Add 1 for the current query token.
-            # This is going to be appended in the attention module.
+            # Compute the kv position for appending retrieval data
+            # Add 1 for the current query token, which is going to be appended in the attention module.
             kv_positions = retrieval_data_length + cache_position.item() + q_len
 
             # Create custom attention mask
@@ -334,16 +333,17 @@ class ReLlama(ReLlamaPreTrainedModel):
             )
 
             # Mask out the padding on the retrieval data side
-            for b_idx, position_id in enumerate(position_ids):
-                # Find the start and end of the retrieval block for padding
-                padding_block_idx = position_id // self.config.retrieval_block_size
-                padding_block_start_idx = (
-                    padding_block_idx * self.config.retrieval_block_size
-                )
-                # Mask out all the padding block until the retrieval data
-                attention_mask[
-                    b_idx, :, padding_block_start_idx:retrieval_data_length
-                ] = float("-inf")
+            if retrieval_key_values is not None:
+                for b_idx, position_id in enumerate(position_ids):
+                    # Find the start and end of the retrieval block for padding
+                    padding_block_idx = position_id // self.config.retrieval_block_size
+                    padding_block_start_idx = (
+                        padding_block_idx * self.config.retrieval_block_size
+                    )
+                    # Mask out all the padding block until the retrieval data
+                    attention_mask[
+                        b_idx, :, padding_block_start_idx:retrieval_data_length
+                    ] = float("-inf")
 
             # Mask out the padding on the input token side
             for b_idx, position_id in enumerate(position_ids):

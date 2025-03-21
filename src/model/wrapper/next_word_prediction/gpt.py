@@ -8,6 +8,24 @@ from src.model.wrapper.next_word_prediction.state import State
 
 
 class NextWordPredictorForGPT(NextWordPredictor):
+    def state_initialization(
+        self,
+        input_ids: torch.Tensor,
+        pad_start_positions: List[int],
+        **kwargs,
+    ) -> State:
+        # Extract the non-padding token ids
+        all_non_padding_token_ids = self.extract_non_padding_token_ids(
+            input_ids=input_ids, pad_start_positions=pad_start_positions
+        )
+
+        # Initialize the state
+        return State(
+            current_input_ids=input_ids,
+            pad_start_positions=pad_start_positions,
+            all_token_ids=all_non_padding_token_ids,
+        )
+
     def call_model(
         self, state: State
     ) -> Tuple[torch.Tensor, Tuple[DynamicCache, None]]:

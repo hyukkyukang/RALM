@@ -26,37 +26,45 @@ class NextWordPredictor(abc.ABC):
         self.topk = topk
 
     @abc.abstractmethod
+    def state_initialization(
+        self,
+        input_ids: torch.Tensor,
+        pad_start_positions: List[int],
+        retrieved_input_ids: Optional[torch.Tensor] = None,
+        num_retrieval_blocks: Optional[int] = None,
+    ) -> State:
+        raise NotImplementedError("This method should be implemented by the subclass.")
+
+    @abc.abstractmethod
     def call_model(
         self, state: State
     ) -> Tuple[torch.Tensor, Tuple[DynamicCache, Optional[torch.Tensor]]]:
         raise NotImplementedError("This method should be implemented by the subclass.")
 
+    def extract_non_padding_token_ids(
+        self, input_ids: torch.Tensor, pad_start_positions: List[int]
+    ) -> List[List[int]]:
+        return [
+            input_ids[b_idx, : pad_start_positions[b_idx]].tolist()
+            for b_idx in range(len(input_ids))
+        ]
+
     def predict(
         self,
         input_ids: torch.Tensor,
-        pad_start_positions: torch.LongTensor,
+        pad_start_positions: List[int],
         retrieved_input_ids: Optional[torch.Tensor] = None,
         num_retrieval_blocks: Optional[int] = None,
     ) -> List[str]:
-        # Configs
-        bsize = len(input_ids)
-
-        # List to append the predictions (no padding)
-        all_token_ids: List[List[int]] = []
-        for b_idx in range(bsize):
-            all_token_ids.append(
-                input_ids[b_idx, : pad_start_positions[b_idx]].tolist()
-            )
-
         # Initialize the states
-        state = State(
-            current_input_ids=input_ids,
+        state = self.state_initialization(
+            input_ids=input_ids,
             pad_start_positions=pad_start_positions,
             retrieved_input_ids=retrieved_input_ids,
             num_retrieval_blocks=num_retrieval_blocks,
-            position_ids=None,
-            past_key_values=None,
-            all_token_ids=all_token_ids,
+            retrieval_block_size=getattr(
+                self.model.config, "retrieval_block_size", None
+            ),
         )
 
         # Predict step by step
@@ -66,7 +74,8 @@ class NextWordPredictor(abc.ABC):
 
             # Get topk candidates
             topk_candidates: List[List[int]] = self.get_topk_candidates(
-                logits, state.pad_start_positions
+                logits=logits,
+                input_pad_start_positions=state.pad_start_positions,
             )
 
             # Get the non-stopword top-1 candidates
@@ -114,12 +123,12 @@ class NextWordPredictor(abc.ABC):
     def get_topk_candidates(
         self,
         logits: Union[torch.Tensor, List[torch.Tensor]],
-        pad_start_positions: List[int],
+        input_pad_start_positions: List[int],
     ) -> List[List[int]]:
         q_len = len(logits[0])
 
         # Find the last non-pad token position
-        last_non_pad_positions = [item - 1 for item in pad_start_positions]
+        last_non_pad_input_positions = [item - 1 for item in input_pad_start_positions]
 
         # Get the logits of the last non-pad tokens
         if q_len == 1:
@@ -131,7 +140,7 @@ class NextWordPredictor(abc.ABC):
                 last_logits = torch.cat(logits, dim=0)
         else:
             last_logits: List[torch.Tensor] = []
-            for b_idx, last_non_pad_position in enumerate(last_non_pad_positions):
+            for b_idx, last_non_pad_position in enumerate(last_non_pad_input_positions):
                 # Handle the case where logits is a tensor
                 if isinstance(logits, torch.Tensor):
                     last_logits.append(logits[b_idx, last_non_pad_position, :])

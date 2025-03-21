@@ -207,7 +207,7 @@ def update_dynamic_cache(
     key_states: torch.Tensor,
     value_states: torch.Tensor,
     layer_idx: int,
-    pad_start_positions: Optional[torch.LongTensor] = None,
+    pad_start_positions: Optional[List[int]] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.

@@ -121,7 +121,7 @@ class ReLlamaAttention(torch.nn.Module):
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         past_key_value: Optional[Cache] = None,
-        pad_start_positions: Optional[torch.LongTensor] = None,
+        pad_start_positions: Optional[List[int]] = None,
         retrieval_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs: FlashAttentionKwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -157,22 +157,21 @@ class ReLlamaAttention(torch.nn.Module):
                 self.layer_idx
             ]
 
-        is_using_kv_cache = query_states.shape[2] != key_states.shape[2]
-        if is_using_kv_cache:
-            # This is when there are past key and value states
-            # Which means we have to select the last retrieval block from the past key and value states
-            # Use only the last retrieval block if we are using past key and value states
-            # Retrieval blocks are already used and is not needed for the current step
-            retrieval_key_states, retrieval_value_states = (
-                self.get_last_retrieval_block(
-                    retrieval_key_states,
-                    retrieval_value_states,
-                    pad_start_positions=pad_start_positions,
-                )
-            )
-
-        # Append retrieval blocks to the key and value states
         if retrieval_key_states is not None:
+            is_using_kv_cache = query_states.shape[2] != key_states.shape[2]
+            if is_using_kv_cache:
+                # This is when there are past key and value states
+                # Which means we have to select the last retrieval block from the past key and value states
+                # Use only the last retrieval block if we are using past key and value states
+                # Retrieval blocks are already used and is not needed for the current step
+                retrieval_key_states, retrieval_value_states = (
+                    self.get_last_retrieval_block(
+                        retrieval_key_states,
+                        retrieval_value_states,
+                        pad_start_positions=pad_start_positions,
+                    )
+                )
+            # Append retrieval blocks to the key and value states
             key_states = torch.cat([retrieval_key_states, key_states], dim=2)
             value_states = torch.cat([retrieval_value_states, value_states], dim=2)
 
