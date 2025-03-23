@@ -76,11 +76,10 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
             # Split to nearest available length that is evenly divisible.
             # This is to ensure each rank receives the same amount of data when
             # using this Sampler.
-            self.num_samples = math.ceil(
-                (len(self.dataset) - self.num_replicas) / self.num_replicas  # type: ignore[arg-type]
-            )
+            remainder = len(self.dataset) % self.num_replicas
+            self.num_samples = len(self.dataset) - remainder
         else:
-            self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)  # type: ignore[arg-type
+            self.num_samples = len(self.dataset)
 
         self.set_epoch(0)
 
