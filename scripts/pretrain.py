@@ -28,7 +28,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.dataset import DataModule
 from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
-from src.model.utils import repair_checkpoint
+from src.model.utils import convert_checkpoint_for_evaluation
 from src.training.checkpoint import TimeBasedCheckpoint
 from src.utils import (
     add_config,
@@ -186,7 +186,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         for ckpt_file_path in tqdm.tqdm(
             ckpt_file_paths, desc="Repairing checkpoints..."
         ):
-            repair_checkpoint(ckpt_file_path)
+            convert_checkpoint_for_evaluation(ckpt_file_path)
         log_if_rank_zero(
             logger, f"{len(ckpt_file_paths)} checkpoints saved successfully!"
         )
