@@ -20,8 +20,11 @@ def remove_prefix(text, substring: str) -> str:
         return text.replace(substring, "")
     return text
 
+def add_prefix(text, src_text: str, dst_text: str) -> str:
+    return text.replace(src_text, dst_text)
 
-def repair_checkpoint(path):
+
+def convert_checkpoint_for_evaluation(path: str) -> None:
     # Load the checkpoint
     ckpt = torch.load(path, weights_only=False, map_location="cpu")
 
@@ -42,6 +45,34 @@ def repair_checkpoint(path):
 
     # Make use_torch_compile to False
     ckpt["hyper_parameters"]["use_torch_compile"] = False
+
+    # Save the checkpoint
+    log_if_rank_zero(logger, f"Saving checkpoint to {path}")
+    torch.save(ckpt, path)
+
+def convert_checkpoint_for_training(path: str) -> None:
+    # Load the checkpoint
+    ckpt = torch.load(path, weights_only=False, map_location="cpu")
+
+    # Replace "model.model." to "model._orig_mod.model."
+    src_text = "model.model."
+    dst_text = "model._orig_mod.model."
+    in_state_dict = ckpt[MODEL_STATE_DICT_KEY]
+    pairings = [
+        (src_key, add_prefix(src_key, src_text, dst_text))
+        for src_key in in_state_dict.keys()
+    ]
+    if all(src_key == dest_key for src_key, dest_key in pairings):
+        log_if_rank_zero(logger, f"No need to repair checkpoint {path}")
+        return  # Do not write checkpoint if no need to repair!
+    out_state_dict = {}
+    for src_key, dest_key in pairings:
+        log_if_rank_zero(logger, f"{src_key}  ==>  {dest_key}")
+        out_state_dict[dest_key] = in_state_dict[src_key]
+    ckpt[MODEL_STATE_DICT_KEY] = out_state_dict
+
+    # Make use_torch_compile to True
+    ckpt["hyper_parameters"]["use_torch_compile"] = True
 
     # Save the checkpoint
     log_if_rank_zero(logger, f"Saving checkpoint to {path}")
