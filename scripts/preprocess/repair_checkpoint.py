@@ -24,11 +24,11 @@ if __name__ == "__main__":
     # Get the checkpoint path
     checkpoint_path = sys.argv[1]
     mode_to_convert = sys.argv[2]
-    
-    if mode_to_convert == "eval":
+
+    if mode_to_convert in ["eval", "evaluation"]:
         assert os.path.exists(checkpoint_path), f"Checkpoint path {checkpoint_path} does not exist"
         convert_checkpoint_for_evaluation(checkpoint_path)
-    elif mode_to_convert == "train":
+    elif mode_to_convert in ["train", "training"]:
         convert_checkpoint_for_training(checkpoint_path)
     else:
         logger.error("mode must be either 'eval' or 'train'")

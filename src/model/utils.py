@@ -21,7 +21,9 @@ def remove_prefix(text, substring: str) -> str:
     return text
 
 def add_prefix(text, src_text: str, dst_text: str) -> str:
-    return text.replace(src_text, dst_text)
+    if text.startswith(src_text): 
+        return dst_text + text[len(src_text):]
+    return text
 
 
 def convert_checkpoint_for_evaluation(path: str) -> None:
@@ -55,8 +57,8 @@ def convert_checkpoint_for_training(path: str) -> None:
     ckpt = torch.load(path, weights_only=False, map_location="cpu")
 
     # Replace "model.model." to "model._orig_mod.model."
-    src_text = "model.model."
-    dst_text = "model._orig_mod.model."
+    src_text = "model."
+    dst_text = "model._orig_mod."
     in_state_dict = ckpt[MODEL_STATE_DICT_KEY]
     pairings = [
         (src_key, add_prefix(src_key, src_text, dst_text))
