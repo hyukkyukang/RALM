@@ -107,7 +107,7 @@ def update_batch_step_in_checkpoint_to_consider_gradient_accumulation(
 
 
 def update_position_in_checkpoint_for_consistency(
-    checkpoint: Dict[str, Any], per_device_batch_size: int
+    checkpoint: Dict[str, Any], per_device_batch_size: int, num_devices: int
 ) -> Dict[str, Any]:
     """
     Update the position in the checkpoint for consistency.
@@ -115,7 +115,13 @@ def update_position_in_checkpoint_for_consistency(
     batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
         "_batches_that_stepped"
     ]
-    position = batch_step_to_position(batches_that_stepped + 1, per_device_batch_size)
+    accumulated_position = batch_step_to_position(batches_that_stepped + 1, per_device_batch_size)
+    
+    # Convert the accumulated position to the positions for this epoch
+    num_positions_per_device = len(checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0]["global_indices"]) // num_devices
+    position = accumulated_position % num_positions_per_device
+    
+    # Update the position of the sampler
     checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0][
         "position"
     ] = position
