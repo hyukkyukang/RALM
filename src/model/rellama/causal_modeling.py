@@ -4,14 +4,12 @@ import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import GenerationMixin
-from transformers.models.llama.modeling_llama import (
-    KwargsForCausalLM,
-    LlamaPreTrainedModel,
-)
+from transformers.models.llama.modeling_llama import (KwargsForCausalLM,
+                                                      LlamaPreTrainedModel)
 
 from src.model.rellama.model import ReLlama
 from src.model.utils import initialize_weights
-from src.utils import is_torch_compile_possible
+from src.objective import disentangle_loss_causalLM
 
 
 class ReLlamaCausalLMOutputWithPast(CausalLMOutputWithPast):
@@ -156,7 +154,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
                 max_retrieval_block_num,
             )
         # Decode with retrieval key values states
-        outputs = self.model(
+        outputs_w_D = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -173,29 +171,61 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             **kwargs,
         )
 
-        hidden_states = outputs[0]
+        hidden_states_w_D = outputs_w_D[0]
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        logits = self.lm_head(hidden_states[:, -num_logits_to_keep:, :])
-
+        logits_w_D = self.lm_head(hidden_states_w_D[:, -num_logits_to_keep:, :])
+        
+        # Compute the loss if labels are provided
         loss = None
         if labels is not None:
-            loss = self.loss_function(
-                logits=logits,
-                labels=labels,
-                vocab_size=self.config.vocab_size,
-                **kwargs,
-            )
+            if self.config.use_disentangle_loss and self.training:
+                # Compute the logits without retrieval
+                outputs_wo_D = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    inputs_embeds=inputs_embeds,
+                    use_cache=use_cache,
+                    output_hidden_states=output_hidden_states,
+                    return_dict=return_dict,
+                    cache_position=cache_position,
+                    pad_start_positions=pad_start_positions,
+                    is_retrieval=False,
+                    **kwargs,
+                )
+
+                # Final hidden states without retrieval
+                hidden_states_wo_D = outputs_wo_D[0]
+                logits_wo_D = self.lm_head(hidden_states_wo_D[:, -num_logits_to_keep:, :])
+                
+                # Compute the disentangle loss    
+                loss = disentangle_loss_causalLM(
+                    logits_with_D=logits_w_D,
+                    logits_wo_D=logits_wo_D,
+                    labels=labels,
+                    alpha=self.config.disentangle_alpha,
+                    margin=self.config.disentangle_margin,
+                )
+            else:
+                # We don't use disentangle loss, just compute the loss with the logits
+                loss = self.loss_function(
+                    logits=logits_w_D,
+                    labels=labels,
+                    vocab_size=self.config.vocab_size,
+                    **kwargs,
+                )
 
         if not return_dict:
-            output = (logits,) + outputs[1:]
+            output = (logits_w_D,) + outputs_w_D[1:]
             return (loss,) + output if loss is not None else output
 
         return ReLlamaCausalLMOutputWithPast(
             loss=loss,
-            logits=logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            logits=logits_w_D,
+            past_key_values=outputs_w_D.past_key_values,
+            hidden_states=outputs_w_D.hidden_states,
+            attentions=outputs_w_D.attentions,
             retrieval_key_values=retrieval_key_values if use_cache else None,
         )
 

@@ -485,4 +485,8 @@ def get_customized_llama_config(
         llama_config.max_position_embeddings % llama_config.input_chunk_size == 0
     ), "max_position_embeddings must be divisible by input_chunk_size"
     llama_config.use_cache = False
+    # For disentangle loss
+    llama_config.use_disentangle_loss = cfg.training.use_disentangle_loss
+    llama_config.disentangle_alpha = cfg.training.disentangle_alpha
+    llama_config.disentangle_margin = cfg.training.disentangle_margin
     return llama_config
