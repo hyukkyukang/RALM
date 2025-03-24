@@ -84,6 +84,11 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
         self.set_epoch(0)
 
     @property
+    def num_position_per_device(self) -> int:
+        """Get the number of positions per device."""
+        return len(self.global_indices) // self.num_replicas
+
+    @property
     def indices(self):
         if not hasattr(self, "_indices"):
             assert self.global_indices is not None, f"global_indices are not set"
@@ -116,7 +121,7 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
     def set_position_by_batch_step(self, batch_step: int, per_device_batch_size: int) -> None:
         """ Set position in dataset """
         # Convert to the actual position in the dataset
-        self.position = batch_step_to_position(batch_step, per_device_batch_size)
+        self.position = batch_step_to_position(batch_step, per_device_batch_size) % self.num_position_per_device
 
     def __iter__(self):
         return iter(self.indices[self.position:])
