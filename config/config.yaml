@@ -45,6 +45,7 @@ defaults:
     - testing: default
     - retrieval: default
     - architecture:
+        - xs
         - small
         - medium
         - large
