@@ -2,7 +2,7 @@ xl:
   layers: 24
   num_attention_heads: 24
   num_key_value_heads: 6 # this should be factor of num_attention_heads
-  intermediate_size: 8192
-  hidden_size: 1600
+  intermediate_size: 6144
+  hidden_size: 1680
   # We follow the GPT-2 architecture to decide the above parameters.
   # https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py?t
