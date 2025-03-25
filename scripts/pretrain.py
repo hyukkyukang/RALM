@@ -174,6 +174,10 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
 
     log_if_rank_zero(logger, "Training completed successfully!")
 
+    # Write done file 
+    with open(os.path.join(default_root_dir, "done.txt"), "w") as f:
+        f.write("Done")
+
     # Rename the modules in the checkpoint when using torch compile
     # For the main process with rank 0 only
     if is_main_process() and cfg.use_torch_compile and is_torch_compile_possible():
