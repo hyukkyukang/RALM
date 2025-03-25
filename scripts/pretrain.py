@@ -16,12 +16,9 @@ import lightning as L
 import psutil
 import torch
 import tqdm
-from lightning.pytorch.callbacks import (
-    LearningRateMonitor,
-    ModelCheckpoint,
-    ModelSummary,
-)
-from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
+                                         ModelSummary)
+from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
 
@@ -30,13 +27,8 @@ from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
 from src.model.utils import convert_checkpoint_for_evaluation
 from src.training.checkpoint import TimeBasedCheckpoint
-from src.utils import (
-    add_config,
-    is_main_process,
-    is_torch_compile_possible,
-    log_if_rank_zero,
-    slack_disable_callback,
-)
+from src.utils import (add_config, is_main_process, is_torch_compile_possible,
+                       log_if_rank_zero, slack_disable_callback)
 
 logger = logging.getLogger("PL_Trainer")
 
@@ -129,6 +121,12 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         save_interval_hours=cfg.training.checkpoint_save_interval_hours,
         dirpath=default_root_dir,
     )
+    
+    # Create wandb logger
+    wandb_logger = WandbLogger(
+        project="ReLlama",
+        name=cfg.tag,
+    )
 
     # Trainer initialization with training args
     trainer = L.Trainer(
@@ -143,9 +141,10 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.logging_steps,
         default_root_dir=default_root_dir,
-        logger=TensorBoardLogger(
-            save_dir=default_root_dir, name=cfg.tag, default_hp_metric=False
-        ),
+        logger=wandb_logger,
+        # TensorBoardLogger(
+        #     save_dir=default_root_dir, name=cfg.tag, default_hp_metric=False
+        # ),
         strategy=DDPStrategy(
             timeout=timedelta(minutes=30), static_graph=True, gradient_as_bucket_view=True
         ),
@@ -166,6 +165,8 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         log_if_rank_zero(
             logger, f"Resuming from checkpoint: {cfg.training.resume_ckpt_path}"
         )
+    
+    
     trainer.fit(
         lightning_module,
         datamodule=data_module,

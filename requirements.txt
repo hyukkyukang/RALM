@@ -14,6 +14,7 @@ standard-imghdr # Temporary fix the tensorboard error
 lion-pytorch
 tensordict
 accelerate
+wandb
 
 # packages for dataset
 ftfy
