@@ -123,10 +123,13 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
     )
     
     # Create wandb logger
-    wandb_logger = WandbLogger(
-        project="ReLlama",
-        name=cfg.tag,
-    )
+    if cfg.tag == "debug":
+        wandb_logger = None
+    else:
+        wandb_logger = WandbLogger(
+            project="ReLlama",
+            name=cfg.tag,
+        )
 
     # Trainer initialization with training args
     trainer = L.Trainer(
