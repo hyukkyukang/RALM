@@ -91,6 +91,10 @@ class LightningModule(L.LightningModule):
     def uncompiled_model(self) -> transformers.LlamaForCausalLM:
         return self.model._orig_mod if hasattr(self.model, "_orig_mod") else self.model
 
+    @property
+    def batch_step(self) -> int:
+        return self.trainer.fit_loop.epoch_loop.batch_progress.total.completed
+
     def initialize_tokenizer(self) -> ReLlamaTokenizer:
         tokenizer = TOKENIZER_REGISTRY[self.cfg.model.name].from_pretrained(
             self.cfg.model.base_name
@@ -237,7 +241,7 @@ class LightningModule(L.LightningModule):
             self.logger.log_metrics(
                 {
                     "cumulative_num_tokens": torch.sum(gathered_tokens),
-                    "global_step": self.global_step,
+                    "optimizer_step": self.global_step,
                 },
                 step=global_training_step,
             )
@@ -281,7 +285,7 @@ class LightningModule(L.LightningModule):
 
         # Lets perform evaluation
         log_dic = {
-            "trainer/global_step": self.global_step,
+            "trainer/step": self.batch_step,
         }
         if val_dataset_name == "lambada":
             # Last word prediction
@@ -560,7 +564,7 @@ class LightningModule(L.LightningModule):
                 "loss": loss,
                 "perplexity": perplexity,
                 "bits_per_byte": bpb,
-                "trainer/global_step": self.global_step,
+                "trainer/step": self.batch_step,
             },
             batch_size=input_ids.size(0),
         )
