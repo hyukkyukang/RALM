@@ -4,7 +4,7 @@ from typing import *
 
 import lightning as L
 import torch
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig, OmegaConf, open_dict
 from pytorch_lightning.utilities import rank_zero_only
 from transformers import AutoModelForCausalLM
 
@@ -134,6 +134,7 @@ def check_argument(
             dic[name] = False
     return True
 
+
 def is_model_compiled(model: Union[L.LightningModule, AutoModelForCausalLM]) -> bool:
     """Check if the model is compiled with torch.compile."""
     if isinstance(model, L.LightningModule):
@@ -150,6 +151,7 @@ def is_model_compiled(model: Union[L.LightningModule, AutoModelForCausalLM]) -> 
     else:
         return isinstance(model, torch._dynamo.eval_frame.OptimizedModule)
 
+
 def is_torch_compile_possible() -> bool:
     return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7
 
@@ -165,3 +167,56 @@ def get_numpy_file_paths_in_dir(dir_path: str) -> List[str]:
         List[str]: A list of file paths as strings.
     """
     return [str(p) for p in Path(dir_path).glob("**/*.npy")]
+
+
+def conf_to_text_chunks(cfg: OmegaConf, num_chunks: int = 2) -> list[str]:
+    """
+    Splits an OmegaConf configuration into exactly num_chunks parts based on its top-level keys.
+
+    Each top-level key-value pair is converted to a YAML snippet and the snippets are
+    then grouped into chunks with approximately balanced total length. When the last chunk
+    is reached, all remaining snippets are added to it. Finally, each chunk is wrapped in triple backticks.
+
+    Args:
+        cfg (OmegaConf): The OmegaConf object to split.
+        num_chunks (int): The desired number of chunks.
+
+    Returns:
+        list[str]: A list where each element is a chunk wrapped in triple backticks.
+    """
+    # Create a list of YAML snippets for each top-level key-value pair.
+    snippets = []
+    for key, value in cfg.items():
+        snippet = OmegaConf.to_yaml({key: value})
+        snippets.append(snippet)
+
+    # Calculate total length and determine target length per chunk.
+    total_length = sum(len(s) for s in snippets)
+    target = total_length / num_chunks if num_chunks > 0 else total_length
+
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    for i, snippet in enumerate(snippets):
+        # If we're about to form the final chunk, just add all remaining snippets.
+        if len(chunks) == num_chunks - 1:
+            current_chunk.extend(snippets[i:])
+            break
+
+        # If adding this snippet exceeds the target and we already have some content,
+        # then finish the current chunk.
+        if current_chunk and (current_length + len(snippet) > target):
+            chunks.append("\n".join(current_chunk))
+            current_chunk = [snippet]
+            current_length = len(snippet)
+        else:
+            current_chunk.append(snippet)
+            current_length += len(snippet)
+
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+
+    # Wrap each chunk with triple backticks.
+    wrapped_chunks = [f"```\n{chunk}\n```" for chunk in chunks]
+    return wrapped_chunks

@@ -1,6 +1,14 @@
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
+import torch
+
+
+def silent_warn_once(*args, **kwargs):
+    pass
+
+
+torch._dynamo.utils.warn_once = silent_warn_once
 import glob
 import json
 import logging
@@ -14,10 +22,12 @@ import hkkang_utils.slack as slack_utils
 import hydra
 import lightning as L
 import psutil
-import torch
 import tqdm
-from lightning.pytorch.callbacks import (LearningRateMonitor, ModelCheckpoint,
-                                         ModelSummary)
+from lightning.pytorch.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+    ModelSummary,
+)
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
@@ -27,8 +37,14 @@ from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
 from src.model.utils import convert_checkpoint_for_evaluation
 from src.training.checkpoint import TimeBasedCheckpoint
-from src.utils import (add_config, is_main_process, is_torch_compile_possible,
-                       log_if_rank_zero, slack_disable_callback)
+from src.utils import (
+    add_config,
+    conf_to_text_chunks,
+    is_main_process,
+    is_torch_compile_possible,
+    log_if_rank_zero,
+    slack_disable_callback,
+)
 
 logger = logging.getLogger("PL_Trainer")
 
@@ -38,6 +54,7 @@ torch._dynamo.config.cache_size_limit = 10000
 # Set the float32 matmul precision to high if the GPU compatibility is above 8.0
 if torch.cuda.get_device_capability() >= (8, 0):
     torch.set_float32_matmul_precision("high")
+
 
 def slack_disable_callback() -> bool:
     return not is_main_process()
@@ -121,7 +138,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         save_interval_hours=cfg.training.checkpoint_save_interval_hours,
         dirpath=default_root_dir,
     )
-    
+
     # Create wandb logger
     if cfg.tag == "debug":
         wandb_logger = None
@@ -145,11 +162,10 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         log_every_n_steps=cfg.training.logging_steps,
         default_root_dir=default_root_dir,
         logger=wandb_logger,
-        # TensorBoardLogger(
-        #     save_dir=default_root_dir, name=cfg.tag, default_hp_metric=False
-        # ),
         strategy=DDPStrategy(
-            timeout=timedelta(minutes=30), static_graph=True, gradient_as_bucket_view=True
+            timeout=timedelta(minutes=30),
+            static_graph=True,
+            gradient_as_bucket_view=True,
         ),
         callbacks=[
             MyProgressBar(),
@@ -168,8 +184,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         log_if_rank_zero(
             logger, f"Resuming from checkpoint: {cfg.training.resume_ckpt_path}"
         )
-    
-    
+
     trainer.fit(
         lightning_module,
         datamodule=data_module,
@@ -178,7 +193,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
 
     log_if_rank_zero(logger, "Training completed successfully!")
 
-    # Write done file 
+    # Write done file
     with open(os.path.join(default_root_dir, "done.txt"), "w") as f:
         f.write("Done")
 
@@ -234,14 +249,14 @@ def main(cfg: DictConfig) -> None:
     success_msg = f"Succeeded pretraining language model!"
     error_msg = f"Failed pretraining language model"
     # Create slack notification replies
-    pretty_cfg: str = OmegaConf.to_yaml(cfg)
+    pretty_cfg_chunks: List[str] = conf_to_text_chunks(cfg)
     full_command = " ".join(psutil.Process(os.getpid()).cmdline())
     number_of_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     slack_notification_replies = [
         f"Command line: \n`{full_command}`\n\n",
         f"Number of GPUs: {number_of_gpus}\n\n",
-        f"Configuration:\n```{pretty_cfg}```\n",
-    ]
+        f"Configuration:\n",
+    ] + pretty_cfg_chunks
     with slack_messenger.notification(
         start_msg=start_msg,
         success_msg=success_msg,

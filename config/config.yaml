@@ -17,23 +17,23 @@ defaults:
         - lambada
         - wikitext
         - curation
-        - glue_cola
-        - glue_sst2
-        - glue_mrpc
-        - glue_mnli_matched
-        - glue_mnli_mismatched
-        - glue_qnli
-        - glue_rte
-        - glue_wnli
-        - glue_qqp
-        - superglue_boolq
-        - superglue_cb
-        - superglue_copa
-        - superglue_multirc
-        - superglue_record
-        - superglue_rte
-        - superglue_wic
-        - superglue_wsc
+        # - glue_cola
+        # - glue_sst2
+        # - glue_mrpc
+        # - glue_mnli_matched
+        # - glue_mnli_mismatched
+        # - glue_qnli
+        # - glue_rte
+        # - glue_wnli
+        # - glue_qqp
+        # - superglue_boolq
+        # - superglue_cb
+        # - superglue_copa
+        # - superglue_multirc
+        # - superglue_record
+        # - superglue_rte
+        # - superglue_wic
+        # - superglue_wsc
     - task:
         - last_word_prediction
         - next_token_prediction
