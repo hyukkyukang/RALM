@@ -18,7 +18,7 @@ class TimeBasedCheckpoint(Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         """Check if 6 hours have passed since the last checkpoint and save a new one."""
         current_time = time.time()
-        if current_time - self.last_checkpoint_time >= self.save_interval_seconds:
+        if trainer.is_global_zero and current_time - self.last_checkpoint_time >= self.save_interval_seconds:
             self.last_checkpoint_time = current_time
             readable_time = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(current_time))
             checkpoint_path = os.path.join(self.dirpath, f"checkpoint-{readable_time}.ckpt")
