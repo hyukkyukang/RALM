@@ -65,6 +65,7 @@ class LightningModule(L.LightningModule):
             fullgraph=False,
         )(self._compiled_step)
         # For evaluation
+        self.validation_step_outputs = TensorDict({})
         self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
         self.__post_init__()
@@ -210,7 +211,8 @@ class LightningModule(L.LightningModule):
                     data_to_dump["num_retrieval_blocks"] = batch["num_retrieval_blocks"]
                 f.write(json.dumps(data_to_dump) + "\n")
 
-        self.compiled_step(
+        results: Dict[str, Any] = self.compiled_step(
+            batch_idx,
             batch["input_ids"],
             batch["attention_mask"],
             batch["retrieved_input_ids"],
@@ -227,24 +229,20 @@ class LightningModule(L.LightningModule):
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
         if batch_idx % self.trainer.log_every_n_steps == 0:
-            # Compute a global step that counts how many times `training_step` has actually been called so far.
-            # This is NOT the same as the number of optimizer steps (which is fewer if gradient accumulation > 1).
-            global_training_step = (
-                self.trainer.current_epoch * self.trainer.num_training_batches
-                + batch_idx
-            )
-
             # First gather and sum tokens across processes
             gathered_tokens = self.all_gather(self.cumulative_tokens)
 
             # Log the total tokens across all processes with that step
-            self.logger.log_metrics(
-                {
-                    "cumulative_num_tokens": torch.sum(gathered_tokens),
-                    "optimizer_step": self.global_step,
-                },
-                step=global_training_step,
-            )
+            if self.trainer.is_global_zero:
+                self.logger.log_metrics(
+                    {
+                        **results,
+                        "epoch": self.trainer.current_epoch,
+                        "cumulative_num_tokens": torch.sum(gathered_tokens),
+                        "optimizer_step": self.global_step,
+                    },
+                    step=self.batch_step,
+                )
 
         if (batch_idx + 1) % self.cfg.training.gradient_accumulation_steps == 0:
             # Log the calling optimizer
@@ -284,9 +282,7 @@ class LightningModule(L.LightningModule):
         val_dataset_name = self.trainer.val_dataloaders[dataloader_idx].dataset.name
 
         # Lets perform evaluation
-        log_dic = {
-            "trainer/step": self.batch_step,
-        }
+        log_dic: Dict[str, Any] = {}
         if val_dataset_name == "lambada":
             # Last word prediction
             accuracy: float = evaluate_last_word_prediction(
@@ -299,38 +295,85 @@ class LightningModule(L.LightningModule):
                 retrieved_input_ids=batch["retrieved_input_ids"],
                 num_retrieval_blocks=batch["num_retrieval_blocks"],
             )
-            log_dic = {"LWP_lambada_acc": accuracy}
+            log_dic = {
+                "LWP_lambada_acc_sum": accuracy * b_size,
+                "LWP_lambada_acc_cnt": b_size,
+            }
         elif val_dataset_name in ["wikitext", "curation"]:
             # Next token prediction
-            loss_sum, valid_tokens_cnt = evaluate_next_token_prediction(
-                token_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"],
-                labels=batch["labels"],
-                model=self.uncompiled_model,
-                retrieved_input_ids=batch["retrieved_input_ids"],
-                num_retrieval_blocks=batch["num_retrieval_blocks"],
-            )
-            # Compute perplexity and bpb
-            perplexity, bpb = compute_perplexity_and_bpb(
-                loss_sum, valid_tokens_cnt, batch["total_chars_cnt"]
+            loss_sum, valid_tokens_cnt = self._handle_batch_for_next_token_prediction(
+                batch
             )
             log_dic = {
-                f"NTP_{val_dataset_name}_perplexity": perplexity,
-                f"NTP_{val_dataset_name}_bpb": bpb,
+                f"NTP_{val_dataset_name}_loss_sum": loss_sum,
+                f"NTP_{val_dataset_name}_valid_tokens_cnt": valid_tokens_cnt,
+                f"NTP_{val_dataset_name}_total_chars_cnt": batch["total_chars_cnt"],
             }
         else:
             raise ValueError(f"Validation step {dataloader_idx} not implemented")
 
+        # Save to the validation step outputs
+        for key, value in log_dic.items():
+            add_to_tensor_dict_safely(self.validation_step_outputs, key, value)
+
         # Log the results
-        if log_dic:
-            self.log_dict(
-                log_dic,
-                batch_size=b_size,
-                on_step=False,
-                on_epoch=True,
-                sync_dist=True,
-                add_dataloader_idx=False,
-            )
+        return log_dic
+
+    @torch.compiler.disable()
+    def on_validation_epoch_end(self) -> None:
+        # Aggregate metrics from all validation steps.
+        gathered_step_outputs: TensorDict = self.all_gather(
+            self.validation_step_outputs
+        )
+        for key in gathered_step_outputs.keys():
+            gathered_step_outputs[key] = gathered_step_outputs[key].sum()
+
+        # Compute the average metrics for each task
+        averaged_metrics: Dict[str, Any] = {}
+        for task_name in self.cfg.validation.task_names:
+            if task_name == "last_word_prediction":
+                for dataset_name in self.cfg.task[task_name].dataset_names:
+                    # Calculate the accuracy
+                    avg_accuracy = (
+                        gathered_step_outputs[f"LWP_{dataset_name}_acc_sum"]
+                        / gathered_step_outputs[f"LWP_{dataset_name}_acc_cnt"]
+                    )
+                    averaged_metrics[f"LWP_{dataset_name}_acc"] = avg_accuracy
+            elif task_name == "next_token_prediction":
+                for dataset_name in self.cfg.task[task_name].dataset_names:
+                    # Calculate the perplexity and bpb
+                    perplexity, bpb = compute_perplexity_and_bpb(
+                        total_loss_sum=gathered_step_outputs[
+                            f"NTP_{dataset_name}_loss_sum"
+                        ],
+                        total_valid_tokens_cnt=gathered_step_outputs[
+                            f"NTP_{dataset_name}_valid_tokens_cnt"
+                        ],
+                        total_chars_cnt=gathered_step_outputs[
+                            f"NTP_{dataset_name}_total_chars_cnt"
+                        ],
+                    )
+                    averaged_metrics[f"NTP_{dataset_name}_perplexity"] = perplexity
+                    averaged_metrics[f"NTP_{dataset_name}_bpb"] = bpb
+            elif task_name == "natural_language_understanding":
+                for dataset_name in self.cfg.task[task_name].dataset_names:
+                    # Calculate the accuracy
+                    avg_accuracy = (
+                        gathered_step_outputs[f"NLU_{dataset_name}_acc_sum"]
+                        / gathered_step_outputs[f"NLU_{dataset_name}_acc_cnt"]
+                    )
+                    averaged_metrics[f"NLU_{dataset_name}_acc"] = avg_accuracy
+
+        # Required for callback function (i.e., ModelCheckpoint) to see.
+        self.log_dict(averaged_metrics, prog_bar=False, sync_dist=True, logger=False)
+
+        # Log the aggregated metrics with the current global step.
+        if self.trainer.is_global_zero:
+            self.logger.log_metrics(averaged_metrics, step=self.batch_step)
+
+        # Reset the validation step outputs
+        self.validation_step_outputs = TensorDict({})
+
         return None
 
     @torch.compiler.disable()
@@ -397,54 +440,54 @@ class LightningModule(L.LightningModule):
 
     def on_test_epoch_end(self) -> None:
         # Gather and sum over all processes
-        gathered_step_outpus: TensorDict = self.all_gather(self.test_step_outputs)
-        for key in gathered_step_outpus.keys():
-            gathered_step_outpus[key] = gathered_step_outpus[key].sum()
+        gathered_step_outputs: TensorDict = self.all_gather(self.test_step_outputs)
+        for key in gathered_step_outputs.keys():
+            gathered_step_outputs[key] = gathered_step_outputs[key].sum()
         # Compute the average metrics for each task
         for task_name in self.cfg.testing.task_names:
             if task_name == "last_word_prediction":
                 for dataset_name in self.cfg.task[task_name].dataset_names:
                     # Calculate the accuracy
                     avg_accuracy = (
-                        gathered_step_outpus[f"LWP_{dataset_name}_acc_sum"]
-                        / gathered_step_outpus[f"LWP_{dataset_name}_acc_cnt"]
+                        gathered_step_outputs[f"LWP_{dataset_name}_acc_sum"]
+                        / gathered_step_outputs[f"LWP_{dataset_name}_acc_cnt"]
                     )
                     log_if_rank_zero(
                         logger,
-                        f"LWP_{dataset_name} Accuracy: {avg_accuracy} (Total: {gathered_step_outpus[f'LWP_{dataset_name}_acc_cnt']})",
+                        f"LWP_{dataset_name} Accuracy: {avg_accuracy} (Total: {gathered_step_outputs[f'LWP_{dataset_name}_acc_cnt']})",
                     )
             elif task_name == "next_token_prediction":
                 for dataset_name in self.cfg.task[task_name].dataset_names:
                     # Calculate the perplexity and bpb
                     perplexity, bpb = compute_perplexity_and_bpb(
-                        total_loss_sum=gathered_step_outpus[
+                        total_loss_sum=gathered_step_outputs[
                             f"NTP_{dataset_name}_loss_sum"
                         ],
-                        total_valid_tokens_cnt=gathered_step_outpus[
+                        total_valid_tokens_cnt=gathered_step_outputs[
                             f"NTP_{dataset_name}_valid_tokens_cnt"
                         ],
-                        total_chars_cnt=gathered_step_outpus[
+                        total_chars_cnt=gathered_step_outputs[
                             f"NTP_{dataset_name}_total_chars_cnt"
                         ],
                     )
                     log_if_rank_zero(
                         logger,
-                        f"NTP_{dataset_name} Perplexity: {perplexity} (Total tokens: {gathered_step_outpus[f'NTP_{dataset_name}_valid_tokens_cnt']})",
+                        f"NTP_{dataset_name} Perplexity: {perplexity} (Total tokens: {gathered_step_outputs[f'NTP_{dataset_name}_valid_tokens_cnt']})",
                     )
                     log_if_rank_zero(
                         logger,
-                        f"NTP_{dataset_name} Bits per byte: {bpb} (Total characters: {gathered_step_outpus[f'NTP_{dataset_name}_total_chars_cnt']})",
+                        f"NTP_{dataset_name} Bits per byte: {bpb} (Total characters: {gathered_step_outputs[f'NTP_{dataset_name}_total_chars_cnt']})",
                     )
             elif task_name == "natural_language_understanding":
                 for dataset_name in self.cfg.task[task_name].dataset_names:
                     # Calculate the accuracy
                     avg_accuracy = (
-                        gathered_step_outpus[f"NLU_{dataset_name}_acc_sum"]
-                        / gathered_step_outpus[f"NLU_{dataset_name}_acc_cnt"]
+                        gathered_step_outputs[f"NLU_{dataset_name}_acc_sum"]
+                        / gathered_step_outputs[f"NLU_{dataset_name}_acc_cnt"]
                     )
                     log_if_rank_zero(
                         logger,
-                        f"NLU_{dataset_name} Accuracy: {avg_accuracy} (Total: {gathered_step_outpus[f'NLU_{dataset_name}_acc_cnt']})",
+                        f"NLU_{dataset_name} Accuracy: {avg_accuracy} (Total: {gathered_step_outputs[f'NLU_{dataset_name}_acc_cnt']})",
                     )
         return None
 
@@ -533,6 +576,7 @@ class LightningModule(L.LightningModule):
 
     def _compiled_step(
         self,
+        batch_idx: int,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         retrieved_input_ids: Optional[torch.Tensor] = None,
@@ -550,24 +594,22 @@ class LightningModule(L.LightningModule):
         )
         # Get the loss and calculate perplexity and bits per byte (BPB)
         loss = outputs.loss
-        perplexity = torch.exp(loss)
 
-        # Convert loss (nats) to bits
-        loss_in_bits = loss * math.log2(math.e)
+        result = {}
+        if batch_idx % self.trainer.log_every_n_steps == 0:
+            perplexity = torch.exp(loss)
+            # Convert loss (nats) to bits
+            loss_in_bits = loss * math.log2(math.e)
 
-        # Compute bits per byte (BPB)
-        bpb = loss_in_bits / avg_char_per_token
+            # Compute bits per byte (BPB)
+            bpb = loss_in_bits / avg_char_per_token
 
-        # Log regular metrics (these will be averaged between logging steps)
-        self.log_dict(
-            {
+            # Log regular metrics (these will be averaged between logging steps)
+            result = {
                 "loss": loss,
                 "perplexity": perplexity,
                 "bits_per_byte": bpb,
-                "trainer/step": self.batch_step,
-            },
-            batch_size=input_ids.size(0),
-        )
+            }
 
         # Average the loss over the gradient accumulation steps
         loss = loss / self.cfg.training.gradient_accumulation_steps
@@ -589,7 +631,7 @@ class LightningModule(L.LightningModule):
                 data_to_dump = {"backward": True}
                 f.write(json.dumps(data_to_dump) + "\n")
 
-        return None
+        return result
 
     def _handle_batch_for_next_token_prediction(
         self,
