@@ -280,7 +280,9 @@ class LightningModule(L.LightningModule):
         val_dataset_name = self.trainer.val_dataloaders[dataloader_idx].dataset.name
 
         # Lets perform evaluation
-        log_dic = {}
+        log_dic = {
+            "trainer/global_step": self.global_step,
+        }
         if val_dataset_name == "lambada":
             # Last word prediction
             accuracy: float = evaluate_last_word_prediction(
@@ -558,6 +560,7 @@ class LightningModule(L.LightningModule):
                 "loss": loss,
                 "perplexity": perplexity,
                 "bits_per_byte": bpb,
+                "trainer/global_step": self.global_step,
             },
             batch_size=input_ids.size(0),
         )
