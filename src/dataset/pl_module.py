@@ -77,7 +77,7 @@ class DataModule(L.LightningDataModule):
                     cfg=self.cfg.dataset[dataset_name],
                     global_cfg=self.cfg,
                     task_name=task_name,
-                    tokenizer=self.tokenizer
+                    tokenizer=self.tokenizer,
                 )
             )
         return datasets
@@ -88,7 +88,9 @@ class DataModule(L.LightningDataModule):
         # Load raw data
         # Check if post_process_cache_path exists
         log_if_rank_zero(logger, f"Preparing {dataset.name} dataset...")
-        if dataset.post_process_cache_path is not None and os.path.exists(dataset.post_process_cache_path):
+        if dataset.post_process_cache_path is not None and os.path.exists(
+            dataset.post_process_cache_path
+        ):
             log_if_rank_zero(logger, "Loading cached post-processed dataset...")
             dataset.post_processed_data = dataset.load_from_disk(
                 dataset.post_process_cache_path
@@ -208,7 +210,7 @@ class DataModule(L.LightningDataModule):
             self.train_dataset,
             shuffle=self.cfg.training.shuffle_train_dataset,
             gradient_accumulation_steps=self.cfg.training.gradient_accumulation_steps,
-            drop_last=True
+            drop_last=True,
         )
         return ResumableDataLoader(
             self.train_dataset,
@@ -241,7 +243,7 @@ class DataModule(L.LightningDataModule):
                     collate_fn=val_dataset.collator,
                     sampler=sampler,
                     shuffle=shuffle,
-                    drop_last=False,
+                    drop_last=True,
                     pin_memory=True,
                 )
             )
@@ -267,7 +269,7 @@ class DataModule(L.LightningDataModule):
                     collate_fn=test_dataset.collator,
                     sampler=sampler,
                     shuffle=shuffle,
-                    drop_last=False,
+                    drop_last=True,
                     pin_memory=False,
                 )
             )
