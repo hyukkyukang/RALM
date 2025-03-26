@@ -20,9 +20,10 @@ def remove_prefix(text, substring: str) -> str:
         return text.replace(substring, "")
     return text
 
+
 def add_prefix(text, src_text: str, dst_text: str) -> str:
-    if text.startswith(src_text): 
-        return dst_text + text[len(src_text):]
+    if text.startswith(src_text):
+        return dst_text + text[len(src_text) :]
     return text
 
 
@@ -51,6 +52,7 @@ def convert_checkpoint_for_evaluation(path: str) -> None:
     # Save the checkpoint
     log_if_rank_zero(logger, f"Saving checkpoint to {path}")
     torch.save(ckpt, path)
+
 
 def convert_checkpoint_for_training(path: str) -> None:
     # Load the checkpoint
@@ -87,22 +89,26 @@ def update_batch_step_in_checkpoint_to_consider_gradient_accumulation(
     """
     Update the batch step in the checkpoint to consider gradient accumulation.
     """
-    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
-        "_batches_that_stepped"
-    ]
-    value_to_subtract = batches_that_stepped % gradient_accumulation_steps
-    new_batches_that_stepped = batches_that_stepped - value_to_subtract
+
+    def modify_step(step: int) -> int:
+        remainder = step % gradient_accumulation_steps
+        return step - remainder
+
+    # Modify the batches_that_stepped
     checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
         "_batches_that_stepped"
-    ] = new_batches_that_stepped
+    ] = modify_step(
+        checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
+            "_batches_that_stepped"
+        ]
+    )
     for key in ["total", "current"]:
         for k, v in checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][
             key
         ].items():
-            checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][key][
-                k
-            ] = new_batches_that_stepped
-            # print(f"Updating {key} {k} from {v} to {checkpoint['loops']['fit_loop']['epoch_loop.batch_progress'][key][k]}")
+            checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][key][k] = (
+                modify_step(v)
+            )
     return checkpoint
 
 
@@ -112,15 +118,14 @@ def update_position_in_checkpoint_for_consistency(
     """
     Update the position in the checkpoint for consistency.
     """
-    batches_that_stepped = checkpoint["loops"]["fit_loop"]["epoch_loop.state_dict"][
-        "_batches_that_stepped"
-    ]
-    accumulated_position = batch_step_to_position(batches_that_stepped + 1, per_device_batch_size)
-    
-    # Convert the accumulated position to the positions for this epoch
-    num_positions_per_device = len(checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0]["global_indices"]) // num_devices
-    position = accumulated_position % num_positions_per_device
-    
+    current_batch_step = (
+        checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"]["current"][
+            "completed"
+        ]
+        + 1
+    )
+    position = batch_step_to_position(current_batch_step, per_device_batch_size)
+
     # Update the position of the sampler
     checkpoint["loops"]["fit_loop"]["state_dict"]["combined_loader"][0][
         "position"

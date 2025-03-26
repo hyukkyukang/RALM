@@ -14,21 +14,24 @@ from tensordict import TensorDict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import Adafactor
 
-from src.evaluation.LM.last_word_prediction import \
-    evaluate_last_word_prediction
+from src.evaluation.LM.last_word_prediction import evaluate_last_word_prediction
 from src.evaluation.LM.next_token_prediction import (
-    compute_perplexity_and_bpb, evaluate_next_token_prediction)
-from src.evaluation.NLU.text_to_text_prediction import \
-    evaluate_text_to_text_prediction
+    compute_perplexity_and_bpb,
+    evaluate_next_token_prediction,
+)
+from src.evaluation.NLU.text_to_text_prediction import evaluate_text_to_text_prediction
 from src.model.llama.causal_modeling import LlamaForCausalLM
 from src.model.llama.model import Llama
 from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
 from src.model.utils import (
-    add_to_tensor_dict_safely, get_compile_decorator, lr_lambda_cosine_decay,
+    add_to_tensor_dict_safely,
+    get_compile_decorator,
+    lr_lambda_cosine_decay,
     lr_lambda_linear_decay,
     update_batch_step_in_checkpoint_to_consider_gradient_accumulation,
-    update_position_in_checkpoint_for_consistency)
+    update_position_in_checkpoint_for_consistency,
+)
 from src.tokenization import ReLlamaTokenizer
 from src.tokenization.registry import TOKENIZER_REGISTRY
 from src.utils import is_torch_compile_possible, log_if_rank_zero
@@ -634,7 +637,7 @@ class LightningModule(L.LightningModule):
 
         # Get the number of devices (if distributed training is used)
         num_devices = dist.get_world_size() if dist.is_initialized() else 1
-        
+
         # Modify the position of the sampler with the batches that stepped
         # This is a hack to make sure the sampler is at the correct position
         # Not sure why the two numbers are different...
