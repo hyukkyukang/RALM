@@ -596,20 +596,24 @@ class LightningModule(L.LightningModule):
         loss = outputs.loss
 
         result = {}
-        if batch_idx % self.trainer.log_every_n_steps == 0:
-            perplexity = torch.exp(loss)
-            # Convert loss (nats) to bits
-            loss_in_bits = loss * math.log2(math.e)
+        if self.trainer.is_global_zero and batch_idx % self.trainer.log_every_n_steps == 0:
+            try:
+                perplexity = torch.exp(loss)
+                # Convert loss (nats) to bits
+                loss_in_bits = loss * math.log2(math.e)
 
-            # Compute bits per byte (BPB)
-            bpb = loss_in_bits / avg_char_per_token
+                # Compute bits per byte (BPB)
+                bpb = loss_in_bits / avg_char_per_token
 
-            # Log regular metrics (these will be averaged between logging steps)
-            result = {
-                "loss": loss,
-                "perplexity": perplexity,
-                "bits_per_byte": bpb,
-            }
+                # Log regular metrics (these will be averaged between logging steps)
+                result = {
+                    "loss": loss,
+                        "perplexity": perplexity,
+                        "bits_per_byte": bpb,
+                    }
+            except Exception as e:
+                print(f"Error in _compiled_step: {e}")
+                result = {}
 
         # Average the loss over the gradient accumulation steps
         loss = loss / self.cfg.training.gradient_accumulation_steps
