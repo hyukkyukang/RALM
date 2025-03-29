@@ -3,10 +3,8 @@ import warnings
 warnings.simplefilter(action="ignore", category=FutureWarning)
 import torch
 
-
 def silent_warn_once(*args, **kwargs):
     pass
-
 
 torch._dynamo.utils.warn_once = silent_warn_once
 import glob
@@ -172,7 +170,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
             LearningRateMonitor(logging_interval="step"),
             # ModelSummary(max_depth=-1), # Turn this on if you want to see the model architecture (i.e., the parameter names),
             checkpoint_callback,
-            time_based_checkpoint_callback,
+            # time_based_checkpoint_callback,
         ],
         # We are handling distributed sampler in the DataModule to use a custom training sampler
         # that supports checkpointing and resumption of training for DDP
