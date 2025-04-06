@@ -41,9 +41,12 @@ class NextWordPredictorForGPT(NextWordPredictor):
             input_ids_wo_padding = state.current_input_ids[
                 b_idx, : state.pad_start_positions[b_idx]
             ]
-            past_key_values = (
-                None if state.past_key_values is None else state.past_key_values[b_idx]
-            )
+
+            # If the past_key_values is None, we need to initialize it
+            if state.past_key_values is None:
+                past_key_values = None
+            else:
+                past_key_values = state.past_key_values[b_idx]
 
             # Call the model
             outputs = self.model(

@@ -82,7 +82,7 @@ class DataModule(L.LightningDataModule):
             )
         return datasets
 
-    def _prepare_dataset(self, dataset: BaseDataset) -> None:
+    def _prepare_dataset(self, dataset: BaseDataset, mode: str) -> None:
         """Downloads the dataset if not already present.
         This method is called only on 1 GPU in distributed training."""
         # Load raw data
@@ -104,7 +104,7 @@ class DataModule(L.LightningDataModule):
                 )
             else:
                 log_if_rank_zero(logger, "Loading dataset...")
-                dataset.load_dataset()
+                dataset.load_dataset(mode=mode)
 
                 # Pre-processing
                 log_if_rank_zero(
@@ -177,14 +177,14 @@ class DataModule(L.LightningDataModule):
         if self.is_test:
             # Prepare the test dataset
             for test_dataset in self.test_datasets:
-                self._prepare_dataset(test_dataset)
+                self._prepare_dataset(test_dataset, mode="test")
         else:
             # Prepare the train dataset
-            self._prepare_dataset(self.train_dataset)
+            self._prepare_dataset(self.train_dataset, mode="train")
 
             # Prepare the val dataset
             for val_dataset in self.val_datasets:
-                self._prepare_dataset(val_dataset)
+                self._prepare_dataset(val_dataset, mode="validation")
 
         return None
 
