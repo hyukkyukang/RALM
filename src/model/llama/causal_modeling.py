@@ -141,10 +141,6 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
                 vocab_size=self.config.vocab_size,
                 **kwargs,
             )
-            if torch.isnan(loss):
-                print("Loss is NaN")
-                print(f"Labels: {labels}")
-                print(f"Logits: {logits}")
 
         if not return_dict:
             output = (logits,) + outputs[1:]

@@ -50,6 +50,10 @@ def evaluate_next_token_prediction(
         print("Loss sum is NaN")
         print(f"Neg log likelihood loss: {neg_log_likelihood_loss}")
         print(f"Num valid tokens: {num_valid_tokens}")
+        print(f"Labels: {labels}")
+        print(f"Logits: {outputs.logits}")
+        print(f"Token IDs: {token_ids}")
+        print(f"Attention mask: {attention_mask}")
 
     return loss_sum, num_valid_tokens
 
