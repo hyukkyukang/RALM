@@ -300,15 +300,19 @@ def update_dynamic_cache(
                 new_key_cache: List[torch.Tensor] = []
                 new_value_cache: List[torch.Tensor] = []
                 for batch_idx, pad_start_idx in enumerate(pad_start_positions):
+                    # Insert the current query at the position before the non-pad token
+                    insert_position = pad_start_idx - 1
+                    
+                    # Concatenate the new key and value states with the old key and value states
                     new_key_cache.append(
                         torch.cat(
                             [
                                 dynamic_cache.key_cache[layer_idx][
-                                    batch_idx, :, :pad_start_idx
+                                    batch_idx, :, :insert_position
                                 ],
                                 key_states[batch_idx, :, :],
                                 dynamic_cache.key_cache[layer_idx][
-                                    batch_idx, :, pad_start_idx:
+                                    batch_idx, :, insert_position:
                                 ],
                             ],
                             dim=-2,
@@ -318,11 +322,11 @@ def update_dynamic_cache(
                         torch.cat(
                             [
                                 dynamic_cache.value_cache[layer_idx][
-                                    batch_idx, :, :pad_start_idx
+                                    batch_idx, :, :insert_position
                                 ],
                                 value_states[batch_idx, :, :],
                                 dynamic_cache.value_cache[layer_idx][
-                                    batch_idx, :, pad_start_idx:
+                                    batch_idx, :, insert_position:
                                 ],
                             ],
                             dim=-2,

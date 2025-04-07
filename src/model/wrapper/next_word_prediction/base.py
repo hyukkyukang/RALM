@@ -110,9 +110,9 @@ class NextWordPredictor(abc.ABC):
         state.past_key_values = past_key_values
         state.position_ids = state.pad_start_positions
         state.retrieval_key_values = retrieval_key_values
+
         # Increment the pad start positions
-        if step_idx > 0:
-            state.pad_start_positions = [item + 1 for item in state.pad_start_positions]
+        state.pad_start_positions = [item + 1 for item in state.pad_start_positions]
 
         # Append for final output containing text from all steps
         for b_idx in range(bsize):

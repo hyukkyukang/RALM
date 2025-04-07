@@ -292,21 +292,24 @@ class Llama(LlamaPreTrainedModel):
             ):
                 # We expect only one token is given for the query.
                 # If not, we need to fix the below attention mask.
+                num_new_tokens = inputs_embeds.shape[1]
                 assert (
-                    inputs_embeds.shape[1] == 1
+                    num_new_tokens == 1
                 ), f"Expect inputs_embeds to have shape [bsz, 1, ...] but got {inputs_embeds.shape}"
 
                 # Create custom attention mask
                 attention_mask = torch.ones(
                     inputs_embeds.shape[0],
                     1,
-                    cache_position.item() + 1,
+                    cache_position.item() + num_new_tokens,
                     device=inputs_embeds.device,
                     dtype=inputs_embeds.dtype,
                 )
-                # Mask out the positions after the position_ids
+                # Mask out the positions after the position_ids + current token
                 for b_idx, position_id in enumerate(position_ids):
-                    attention_mask[b_idx, :, position_id + 1 :] = float("-inf")
+                    attention_mask[b_idx, :, position_id + 1 :] = float(
+                        "-inf"
+                    )
 
                 # Reshape the attention mask to be 4D
                 attention_mask = attention_mask.unsqueeze(1).expand(
