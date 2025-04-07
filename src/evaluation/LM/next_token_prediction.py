@@ -46,6 +46,10 @@ def evaluate_next_token_prediction(
 
     # Get the loss sum
     loss_sum = neg_log_likelihood_loss * num_valid_tokens
+    if torch.isnan(loss_sum):
+        print("Loss sum is NaN")
+        print(f"Neg log likelihood loss: {neg_log_likelihood_loss}")
+        print(f"Num valid tokens: {num_valid_tokens}")
 
     return loss_sum, num_valid_tokens
 
