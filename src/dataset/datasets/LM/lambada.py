@@ -50,7 +50,7 @@ class LambadaDataset(BaseDataset):
     def post_process_cache_path(self) -> str:
         return os.path.join(self.tokenized_cache_path, "lambada_post_processed")
 
-    def load_dataset(self) -> None:
+    def load_dataset(self, mode: str=None) -> None:
         """Loads and preprocesses the LAMBADA dataset.
 
         Returns:
@@ -67,7 +67,7 @@ class LambadaDataset(BaseDataset):
             dataset = Dataset.from_list(dataset)
         else:
             # Load the raw dataset from Hugging Face
-            dataset: Dataset = super().load_dataset()
+            dataset: Dataset = super().load_dataset(mode=mode)
         # Save the raw data
         self.raw_data = dataset
         return dataset

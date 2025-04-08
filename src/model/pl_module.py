@@ -108,8 +108,16 @@ class LightningModule(L.LightningModule):
             model = ReLlama(self.cfg, self.tokenizer)
             causal_model = ReLlamaForCausalLM(base_model=model)
         elif self.cfg.model.name == "gpt":
+            # Get the model name
+            model_name: str = self.cfg.model.base_name
+            if self.cfg.model.architecture is not None:
+                assert self.cfg.model.architecture in ["small", "medium", "large", "xl"], \
+                    f"Architecture {self.cfg.model.architecture} not supported"
+                if self.cfg.model.architecture != "small":
+                    model_name = f"{model_name}-{self.cfg.model.architecture}"
+            # Initialize the model
             causal_model = AutoModelForCausalLM.from_pretrained(
-                self.cfg.model.base_name
+                model_name
             )
         elif self.cfg.model.name == "llama":
             model = Llama(self.cfg, self.tokenizer)

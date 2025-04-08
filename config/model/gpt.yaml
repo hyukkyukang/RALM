@@ -1,3 +1,4 @@
 name: gpt
 base_name: openai-community/gpt2
 max_length: 1024
+architecture: small
