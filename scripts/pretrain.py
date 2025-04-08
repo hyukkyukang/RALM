@@ -34,7 +34,6 @@ from src.dataset import DataModule
 from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
 from src.model.utils import convert_checkpoint_for_evaluation
-from src.training.checkpoint import TimeBasedCheckpoint
 from src.utils import (
     add_config,
     conf_to_text_chunks,
@@ -132,10 +131,6 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         save_on_train_epoch_end=False,
         enable_version_counter=True,
     )
-    time_based_checkpoint_callback = TimeBasedCheckpoint(
-        save_interval_hours=cfg.training.checkpoint_save_interval_hours,
-        dirpath=default_root_dir,
-    )
 
     # Create wandb logger
     if cfg.tag == "debug":
@@ -170,7 +165,6 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
             LearningRateMonitor(logging_interval="step"),
             # ModelSummary(max_depth=-1), # Turn this on if you want to see the model architecture (i.e., the parameter names),
             checkpoint_callback,
-            # time_based_checkpoint_callback,
         ],
         # We are handling distributed sampler in the DataModule to use a custom training sampler
         # that supports checkpointing and resumption of training for DDP

@@ -8,7 +8,6 @@ max_epochs: 1
 logging_steps: 1000
 checkpoint_save_steps: null
 resume_ckpt_path: null
-checkpoint_save_interval_hours: 6
 
 # Dataloader
 num_workers: 8
