@@ -162,7 +162,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         logger=wandb_logger,
         strategy=DDPStrategy(
             timeout=timedelta(minutes=30),
-            static_graph=True,
+            static_graph=False,
             gradient_as_bucket_view=True,
         ),
         callbacks=[

@@ -72,7 +72,6 @@ shuf {cleaned_deduplicated_data_file_path} -o {output_file_path}
 
 ## Training
 ```bash
-
 CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/pretrain.py \
     _global.tag=lion_1e-4 \
     optimizer=lion \

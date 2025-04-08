@@ -524,7 +524,7 @@ class LightningModule(L.LightningModule):
 
         # Extract values
         warmup_iters: int = self.cfg.lr_scheduler.warmup_steps
-        intermediate_iters: int = self.cfg.lr_scheduler.intermediate_steps
+        intermediate_iters: Optional[int] = self.cfg.lr_scheduler.intermediate_steps
         total_iters: int = self.total_optimization_steps
         max_lr: float = self.cfg.lr_scheduler.max_learning_rate
         min_lr: float = self.cfg.lr_scheduler.min_learning_rate
