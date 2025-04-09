@@ -513,8 +513,10 @@ def main(cfg: DictConfig) -> None:
     scale = head_dim**-0.5
 
     # Retrieval parameters
-    num_chunks_per_block = cfg.model.retrieval_chunk_num
-    retrieval_block_size = chunk_size * num_chunks_per_block
+    retrieval_block_size = (
+        cfg.model.retrieval_chunk_size * cfg.model.num_chunks_per_group
+        * cfg.model.num_groups_per_block
+    )
 
     # Calculate number of retrieval blocks needed
     num_block_per_input = math.ceil(input_length / chunk_size) - 1

@@ -477,9 +477,10 @@ def get_customized_llama_config(
     # Related to the retrival chunks
     llama_config.input_chunk_size = cfg.model.input_chunk_size
     llama_config.retrieval_chunk_size = cfg.model.retrieval_chunk_size
-    llama_config.retrieval_chunk_num = cfg.model.retrieval_chunk_num
+    llama_config.top_k_retrieval_chunks = cfg.model.top_k_retrieval_chunks
+    llama_config.num_consecutive_retrieval_chunks = cfg.model.num_consecutive_retrieval_chunks
     llama_config.retrieval_block_size = (
-        cfg.model.retrieval_chunk_size * cfg.model.retrieval_chunk_num
+        cfg.model.retrieval_chunk_size * cfg.model.num_consecutive_retrieval_chunks * cfg.model.top_k_retrieval_chunks
     )
     assert (
         llama_config.max_position_embeddings % llama_config.input_chunk_size == 0

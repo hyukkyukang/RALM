@@ -31,8 +31,12 @@ def main(cfg: DictConfig) -> None:
     kv_nhead = cfg.architecture[cfg.model.architecture].num_key_value_heads
     head_dim = total_dim // nhead
     chunk_size = cfg.model.input_chunk_size
-    num_chunks_per_block = cfg.model.retrieval_chunk_num
-    retrieval_block_size = chunk_size * num_chunks_per_block
+    retrieval_chunk_group_size = (
+        cfg.model.retrieval_chunk_size * cfg.model.num_chunks_per_group
+    )
+    retrieval_block_size = (
+        retrieval_chunk_group_size * cfg.model.num_groups_per_block
+    )
     num_block_per_input = math.ceil(input_length / chunk_size) - 1
     retrieval_block_len = retrieval_block_size * num_block_per_input
     kv_with_retrieval_length = input_length + retrieval_block_len

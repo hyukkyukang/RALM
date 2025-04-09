@@ -339,13 +339,13 @@ class SentenceTransformerRetriever:
             indices = [self._filter_by_passage_id(lst, passage_to_ignore_list[b_idx]) for b_idx, lst in enumerate(indices)]
 
         # Get the top-k nearest neighbors
-        indices = [lst[:original_k] for lst in indices]
+        indices: List[List[int]] = [lst[:original_k] for lst in indices]
 
         if ensure_return_topk:
-            # Count valid indices
-            valid_indices = sum(i != -1 for lst in indices for i in lst)
+            # Check if there are any batch indices with valid_indices less than the original k
+            valid_indices_per_batch: List[int] = [sum(i != -1 for i in lst) for lst in indices]
             # Search with increased nprobe if the number of valid indices is less than the original k
-            if valid_indices < original_k:
+            if any(valid_indices < original_k for valid_indices in valid_indices_per_batch):
                 # Search with increased nprobe
                 original_nprobe = self.index.nprobe
                 self.index.nprobe = k*2
@@ -363,9 +363,9 @@ class SentenceTransformerRetriever:
                 self.index.nprobe = original_nprobe
 
             # Count valid indices
-            valid_indices = sum(i != -1 for lst in indices for i in lst)
-
-            assert valid_indices == original_k, "The number of valid indices is not equal to the original k"
+            valid_indices_per_batch: List[int] = [sum(i != -1 for i in lst) for lst in indices]
+            assert all(valid_indices == original_k for valid_indices in valid_indices_per_batch), \
+                f"The number of valid indices is not equal to the original k: {valid_indices_per_batch} != {original_k}"
 
         # Convert the indices to text if requested
         if return_as_text:

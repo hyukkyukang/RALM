@@ -1,11 +1,5 @@
 # Retrieval-augmented Language Model
 
-## Retrieval
-
-```bash
-export TORCH_COMPILE_DISABLE=1
-export PYTORCH_DISABLE_GPU_KERNELS=1
-```
 
 ## Install dependencies
 Install torch and legacy-cgi (for Python3.13)
@@ -33,41 +27,23 @@ pip install -r requirements.txt
 wget -O data/lambada_gpt2_author.jsonl https://openaipublic.blob.core.windows.net/gpt-2/data/lambada_test.jsonl
 ```
 
-### Download the OpenWebText dataset
-1. Download the deduplicated URLs from [jcpeterson](https://mega.nz/#F!EZZD0YwJ!9_PlEQzdMVLaNdKv_ICNVQ!cc4RgQQZ).
+## Retrieval
 
-2. Remove the blacklisted URLs.
 ```bash
-python datasets/blacklist_urls.py \
-            --url_dir_path {datasets/urls/} \
-            --output_file_path {clean_url.txt} \
-            --print_blacklist
-```
-3. Download the content from the clean URLs with [openwebtext's utilities](https://github.com/eukaryote31/openwebtext/blob/master/download.py).
-```bash
-python scripts/dataset/scrape_from_urls.py \
-            --url_file=/root/RETRO/clean_urls.txt \
-            --output_dir=/root/RETRO/data/texts/ \
-            --config_dir_path=/root/RETRO/config/
-```
-4. Merge the contents into one loose json file with 1 json per newline of the format {'text': text, 'url': unique_url}. It is important for the url to be unique.
-```bash
-python scripts/dataset/merge_scraped_contents.py \
-            --input_dir_path=/root/RETRO/data/texts/ \
-            --output_file_path=/root/RETRO/data/texts/merged.jsonl
+export TORCH_COMPILE_DISABLE=1
+export PYTORCH_DISABLE_GPU_KERNELS=1
 ```
 
-### Preprocess the dataset for pre-training
-1. Cleanup the dataset (e.g., removing documents with less than 128 tokens or possible duplicates).
+### Conduct retrieval for the target dataset
 ```bash
-python scripts/dataset/cleanup_dataset.py \
-            --input_file_path=/root/RETRO/data/texts/merged.jsonl \
-            --output_file_path=/root/RETRO/data/texts/preprocessed.jsonl \
-            --min_tokens=128
+python scripts/retrieval/retrieve.py \
+    +target_dataset=lambada
 ```
-2. Shuffle the dataset.
+
+### Combine retrieved chunks for the target dataset
 ```bash
-shuf {cleaned_deduplicated_data_file_path} -o {output_file_path}
+python scripts/retrieval/combine_retrieved_chunks.py \
+    +target_dataset=lambada
 ```
 
 ## Training
