@@ -11,6 +11,7 @@ input_chunk_size: 64
 # Retrieval Block: Multiple retrieval chunk groups.
 retrieval_chunk_size: 64
 top_k_retrieval_chunks: 1
-num_consecutive_retrieval_chunks: 2
+num_consecutive_retrieval_chunks: 1
 is_use_retrieval: true
 architecture: small
+oracle_retrieval: false

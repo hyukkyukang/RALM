@@ -478,9 +478,13 @@ def get_customized_llama_config(
     llama_config.input_chunk_size = cfg.model.input_chunk_size
     llama_config.retrieval_chunk_size = cfg.model.retrieval_chunk_size
     llama_config.top_k_retrieval_chunks = cfg.model.top_k_retrieval_chunks
-    llama_config.num_consecutive_retrieval_chunks = cfg.model.num_consecutive_retrieval_chunks
+    llama_config.num_consecutive_retrieval_chunks = (
+        cfg.model.num_consecutive_retrieval_chunks
+    )
     llama_config.retrieval_block_size = (
-        cfg.model.retrieval_chunk_size * cfg.model.num_consecutive_retrieval_chunks * cfg.model.top_k_retrieval_chunks
+        cfg.model.retrieval_chunk_size
+        * cfg.model.num_consecutive_retrieval_chunks
+        * cfg.model.top_k_retrieval_chunks
     )
     assert (
         llama_config.max_position_embeddings % llama_config.input_chunk_size == 0
@@ -490,4 +494,6 @@ def get_customized_llama_config(
     llama_config.use_disentangle_loss = cfg.training.use_disentangle_loss
     llama_config.disentangle_alpha = cfg.training.disentangle_alpha
     llama_config.disentangle_margin = cfg.training.disentangle_margin
+    # For retrieval
+    llama_config.oracle_retrieval = cfg.model.oracle_retrieval
     return llama_config

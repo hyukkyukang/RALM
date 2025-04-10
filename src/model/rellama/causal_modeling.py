@@ -4,8 +4,10 @@ import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import GenerationMixin
-from transformers.models.llama.modeling_llama import (KwargsForCausalLM,
-                                                      LlamaPreTrainedModel)
+from transformers.models.llama.modeling_llama import (
+    KwargsForCausalLM,
+    LlamaPreTrainedModel,
+)
 
 from src.model.rellama.model import ReLlama
 from src.model.utils import initialize_weights
@@ -133,6 +135,38 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
         # Create retrieval key values if there is retrieval data and key values are not provided
         if has_retrieval_data and retrieval_key_values is None:
+            if self.config.oracle_retrieval:
+                # Use the input ids to encode and use as the retrieved_input_ids
+                # Devide the input ids into chunks. Ex: (2, 86) -> [(2, 64), (2, 22)]
+                # Then encode each chunk and use as the retrieval key values
+                devided_input_ids: List[torch.Tensor] = list(
+                    torch.split(input_ids, 64, dim=1)
+                )
+
+                # Pad the last chunk to the same length as the first chunk
+                last_chunk = torch.ones_like(devided_input_ids[0])
+
+                # Fill with padding token ids
+                last_chunk[:] = self.config.pad_token_id
+                last_chunk[:, : devided_input_ids[-1].shape[1]] = devided_input_ids[-1]
+                devided_input_ids[-1] = last_chunk
+
+                # Select the input chunks to be used as retrieval data
+                selected_input_chunks: List[torch.Tensor] = []
+                for b_idx, select_num in enumerate(num_retrieval_blocks):
+                    for i in range(select_num):
+                        # Skip the first chunk by adding 1 to the index
+                        selected_input_chunks.append(devided_input_ids[i + 1][b_idx])
+                retrieved_input_ids_by_input_ids = torch.stack(
+                    selected_input_chunks, dim=0
+                ).unsqueeze(1)
+
+                # Replace the retrieved input ids with the selected input chunks
+                assert (
+                    retrieved_input_ids_by_input_ids.shape == retrieved_input_ids.shape
+                ), f"retrieved_input_ids_by_input_ids.shape: {retrieved_input_ids_by_input_ids.shape}, retrieved_input_ids.shape: {retrieved_input_ids.shape}"
+                retrieved_input_ids = retrieved_input_ids_by_input_ids
+
             max_retrieval_block_num = max(num_retrieval_blocks)
             block_num, chunk_num, chunk_len = retrieved_input_ids.shape
 
@@ -174,7 +208,7 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         hidden_states_w_D = outputs_w_D[0]
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         logits_w_D = self.lm_head(hidden_states_w_D[:, -num_logits_to_keep:, :])
-        
+
         # Compute the loss if labels are provided
         loss = None
         if labels is not None:
@@ -197,9 +231,11 @@ class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
 
                 # Final hidden states without retrieval
                 hidden_states_wo_D = outputs_wo_D[0]
-                logits_wo_D = self.lm_head(hidden_states_wo_D[:, -num_logits_to_keep:, :])
-                
-                # Compute the disentangle loss    
+                logits_wo_D = self.lm_head(
+                    hidden_states_wo_D[:, -num_logits_to_keep:, :]
+                )
+
+                # Compute the disentangle loss
                 loss = disentangle_loss_causalLM(
                     logits_with_D=logits_w_D,
                     logits_wo_D=logits_wo_D,

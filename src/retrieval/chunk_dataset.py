@@ -14,7 +14,9 @@ from omegaconf import DictConfig
 
 from src.retrieval.utils import (
     convert_global_chunk_id_to_passage_id_and_local_chunk_range,
-    convert_passage_id_to_global_chunk_ids, validate_saved_numpy_files)
+    convert_passage_id_to_global_chunk_ids,
+    validate_saved_numpy_files,
+)
 from src.tokenization import ReLlamaTokenizer
 from src.utils import get_numpy_file_paths_in_dir
 
@@ -55,16 +57,17 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
         retrieved_token_ids: List[List[int]] = (
             self.get_retrieved_token_ids_by_passage_id(passage_idx)
         )
+
         return retrieved_token_ids
 
     @property
     def num_top_k_chunks_to_use_per_idx(self) -> int:
         return self.global_cfg.model.top_k_retrieval_chunks
-    
+
     @property
     def num_consecutive_retrieval_chunks(self) -> int:
         return self.global_cfg.model.num_consecutive_retrieval_chunks
-    
+
     @property
     def num_chunks_per_passage(self) -> int:
         return (
@@ -219,7 +222,9 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
 
         return None
 
-    def global_chunk_id_to_shard_idx_and_local_idx(self, global_chunk_id: int) -> Tuple[int, int]:
+    def global_chunk_id_to_shard_idx_and_local_idx(
+        self, global_chunk_id: int
+    ) -> Tuple[int, int]:
         """
         Get the shard index and local index by the global chunk id.
         """
@@ -252,7 +257,9 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
         """
         Get the retrieved token ids for the given global chunk id.
         """
-        shard_idx, shard_local_idx = self.global_chunk_id_to_shard_idx_and_local_idx(global_chunk_id)
+        shard_idx, shard_local_idx = self.global_chunk_id_to_shard_idx_and_local_idx(
+            global_chunk_id
+        )
         shard = self.shards[shard_idx]
         # Get the retrieved chunk ids for the item at index idx.
         retrieved_chunk_ids: List[int] = shard[shard_local_idx]["chunk_ids"][
@@ -285,25 +292,39 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
         )
         retrieved_token_ids: List[List[int]] = []
         # Retrieve the input ids for all but the last global chunk id
+        empty_chunk_found: bool = False
         for global_chunk_id in global_chunk_ids[:-1]:
-            token_ids: List[int] = self.get_retrieved_token_ids_by_global_chunk_id(global_chunk_id)
+            token_ids: List[int] = self.get_retrieved_token_ids_by_global_chunk_id(
+                global_chunk_id
+            )
             # Token_ids may be empty if the passage is less than the max input length
             if len(token_ids) > 0:
+                empty_chunk_found = True
                 retrieved_token_ids.append(token_ids)
+
+        if empty_chunk_found:
+            # Remove the last retrieved token ids
+            # Because this means that the last chunk has not been dropped
+            retrieved_token_ids = retrieved_token_ids[:-1]
         return retrieved_token_ids
 
-    def modify_retrieved_chunk_ids(self, global_chunk_id: int, retrieved_global_chunk_ids: List[int]) -> None:
+    def modify_retrieved_chunk_ids(
+        self, global_chunk_id: int, retrieved_global_chunk_ids: List[int]
+    ) -> None:
         """
         Modify the retrieval chunk ids for the given global chunk id.
         """
-        shard_idx, shard_local_idx = self.global_chunk_id_to_shard_idx_and_local_idx(global_chunk_id)
+        shard_idx, shard_local_idx = self.global_chunk_id_to_shard_idx_and_local_idx(
+            global_chunk_id
+        )
         shard = self.shards[shard_idx]
-        
+
         # Check the original number of retrieved chunk ids
         original_num_retrieved_chunk_ids: int = len(shard[shard_local_idx]["chunk_ids"])
-        assert len(retrieved_global_chunk_ids) == original_num_retrieved_chunk_ids,\
-            f"The number of retrieved chunk ids is not equal to the original number of retrieved chunk ids. {len(retrieved_global_chunk_ids)} != {original_num_retrieved_chunk_ids}"
-        
+        assert (
+            len(retrieved_global_chunk_ids) == original_num_retrieved_chunk_ids
+        ), f"The number of retrieved chunk ids is not equal to the original number of retrieved chunk ids. {len(retrieved_global_chunk_ids)} != {original_num_retrieved_chunk_ids}"
+
         # Define a function that updates the target record
         def update_fn(example, idx):
             if idx == shard_local_idx:
@@ -322,22 +343,28 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
 
         return None
 
-    def bulk_modify_retrieved_chunk_ids(self, modifications: Dict[int, Dict[int, List[int]]]) -> None:
+    def bulk_modify_retrieved_chunk_ids(
+        self, modifications: Dict[int, Dict[int, List[int]]]
+    ) -> None:
         """
         Perform bulk modifications on retrieval chunk ids.
         `modifications` is a dictionary mapping shard index to another dictionary mapping shard local index to new chunk ids.
         """
-        for shard_idx, updates in tqdm.tqdm(modifications.items(), desc="Bulk modifying retrieval chunk ids"):
+        for shard_idx, updates in tqdm.tqdm(
+            modifications.items(), desc="Bulk modifying retrieval chunk ids"
+        ):
             shard = self.shards[shard_idx]
+
             def update_fn(example, idx):
                 if idx in updates:
                     new_chunk_ids = updates[idx]
                     original_num = len(example["chunk_ids"])
-                    assert len(new_chunk_ids) == original_num, (
-                        f"Mismatch in number of chunk ids for update at shard index {shard_idx}, local index {idx}"
-                    )
+                    assert (
+                        len(new_chunk_ids) == original_num
+                    ), f"Mismatch in number of chunk ids for update at shard index {shard_idx}, local index {idx}"
                     example["chunk_ids"] = new_chunk_ids
                 return example
+
             updated_shard = shard.map(update_fn, with_indices=True)
             self._shards[shard_idx] = updated_shard
 
@@ -373,7 +400,9 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
                 os.rename(temp_path, shard_path)
 
         # Update the dataset in memory with the newly saved one
-        for shard_idx in tqdm.tqdm(range(num_shards), desc="Updating dataset in memory"):
+        for shard_idx in tqdm.tqdm(
+            range(num_shards), desc="Updating dataset in memory"
+        ):
             if shard_idx in shard_indices:
                 shard_path: str = self.chunk_ids_shard_paths[shard_idx]
                 self._shards.append(Dataset.load_from_disk(shard_path))
