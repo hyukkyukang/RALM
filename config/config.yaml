@@ -17,6 +17,7 @@ defaults:
         - lambada
         - wikitext
         - curation
+        - pile
         # - glue_cola
         # - glue_sst2
         # - glue_mrpc

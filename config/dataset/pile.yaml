@@ -1,0 +1,12 @@
+pile:
+  name: pile
+  huggingface_dataset_name: monology/pile-uncopyrighted
+  subset: null
+  split_mapping:
+    train: train
+    validation: validation
+    test: test
+  dir_name: data
+  remove_columns:
+    - meta
+    

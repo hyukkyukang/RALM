@@ -5,6 +5,7 @@ from .LM.curation import CurationDataset
 from .LM.lambada import LambadaDataset
 from .LM.pints_ai import PintsAIDataset
 from .LM.wikitext import WikiTextDataset
+from .LM.pile import PileDataset
 from .NLU.glue_cola import GLUECoLADataset
 from .NLU.glue_sst2 import GLUESST2Dataset
 from .NLU.glue_mrpc import GLUEMRPCDataset
@@ -31,6 +32,7 @@ DATASET_REGISTRY: Dict[str, Type[BaseDataset]] = {
     "lambada": LambadaDataset,
     "wikitext": WikiTextDataset,
     "curation": CurationDataset,
+    "pile": PileDataset,
     
     # GLUE datasets
     "glue_cola": GLUECoLADataset,

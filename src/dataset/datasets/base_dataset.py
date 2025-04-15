@@ -3,7 +3,7 @@ import logging
 import os
 from functools import cached_property
 from typing import *
-
+import multiprocessing
 import hkkang_utils.concurrent as concurrent_utils
 import tqdm
 from datasets import Dataset
@@ -132,11 +132,12 @@ class BaseDataset:
             # Get total number of items
             total_items = len(self.tokenized_data)
             # Get number of items per process
-            items_per_process = total_items // 64
+            num_workers = multiprocessing.cpu_count()
+            items_per_process = total_items // num_workers
             # Initialize multiprocessor
-            multiprocessor = concurrent_utils.MultiProcessor(num_workers=64)
+            multiprocessor = concurrent_utils.MultiProcessor(num_workers=num_workers)
             # Run count_tokens for each process
-            for i in range(64):
+            for i in range(num_workers):
                 multiprocessor.run(
                     self._count_tokens,
                     process_idx=i,
@@ -196,7 +197,7 @@ class BaseDataset:
                 self._tokenization_fn,
                 batched=batched,
                 remove_columns=remove_columns,
-                num_proc=64,
+                num_proc=multiprocessing.cpu_count(),
             )
         return None
 

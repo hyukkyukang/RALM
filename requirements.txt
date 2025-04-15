@@ -15,6 +15,7 @@ lion-pytorch
 tensordict
 accelerate
 wandb
+zstandard # This is for the pile dataset from huggingface
 
 # packages for dataset
 ftfy
