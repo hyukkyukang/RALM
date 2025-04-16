@@ -16,6 +16,7 @@ tensordict
 accelerate
 wandb
 zstandard # This is for the pile dataset from huggingface
+calflops
 
 # packages for dataset
 ftfy

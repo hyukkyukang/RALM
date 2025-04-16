@@ -33,7 +33,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.dataset import DataModule
 from src.dataset.dataloader import MyProgressBar
 from src.model import LightningModule
-from src.model.utils import convert_checkpoint_for_evaluation
+from src.model.utils import calculate_FLOPs, convert_checkpoint_for_evaluation
 from src.utils import (
     add_config,
     conf_to_text_chunks,
@@ -119,6 +119,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         total_optimization_steps=total_optimization_steps,
         tokenizer=data_module.tokenizer,
     )
+    log_if_rank_zero(logger, f"FLOPs per batch: {lightning_module.flops_per_batch}")
 
     # Initialize checkpoint callback
     checkpoint_callback = ModelCheckpoint(

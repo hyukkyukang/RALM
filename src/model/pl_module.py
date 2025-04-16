@@ -26,6 +26,7 @@ from src.model.rellama.causal_modeling import ReLlamaForCausalLM
 from src.model.rellama.model import ReLlama
 from src.model.utils import (
     add_to_tensor_dict_safely,
+    calculate_FLOPs,
     get_compile_decorator,
     lr_lambda_cosine_decay,
     lr_lambda_linear_decay,
@@ -54,7 +55,7 @@ class LightningModule(L.LightningModule):
         self.tokenizer: Union[ReLlamaTokenizer, AutoTokenizer] = (
             self.initialize_tokenizer() if tokenizer is None else tokenizer
         )
-        self.model: transformers.LlamaForCausalLM = self.initialize_language_model()
+        self.model, self.flops_per_batch = self.initialize_language_model()
         # Store all arguments within the model checkpoint.
         self.save_hyperparameters(cfg)
         # For efficient training
@@ -68,6 +69,8 @@ class LightningModule(L.LightningModule):
         self.validation_step_outputs = TensorDict({})
         self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
+        # Register buffer for tracking total FLOPs processed
+        self.register_buffer("total_flops_processed", torch.tensor(0, dtype=torch.float64))
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -102,7 +105,7 @@ class LightningModule(L.LightningModule):
         )
         return tokenizer
 
-    def initialize_language_model(self) -> transformers.LlamaForCausalLM:
+    def initialize_language_model(self) -> Tuple[transformers.LlamaForCausalLM, float]:
         # Initialize the model
         if self.cfg.model.name == "rellama":
             model = ReLlama(self.cfg, self.tokenizer)
@@ -124,6 +127,11 @@ class LightningModule(L.LightningModule):
             causal_model = LlamaForCausalLM(base_model=model)
         else:
             raise ValueError(f"Model name {self.cfg.model.name} not supported")
+        
+        # Compute FLOPs per batch
+        flops_per_batch: float = calculate_FLOPs(model=causal_model, 
+                                        tokenizer=self.tokenizer, 
+                                        max_seq_len=self.cfg.model.max_length)
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
         if self.cfg.get("use_torch_compile", False):
@@ -148,7 +156,7 @@ class LightningModule(L.LightningModule):
             )
             causal_model.gradient_checkpointing_enable()
 
-        return causal_model
+        return causal_model, flops_per_batch
 
     def forward(
         self,
@@ -189,10 +197,16 @@ class LightningModule(L.LightningModule):
         self.trainer.train_dataloader.sampler.set_position_by_batch_step(
             batch_idx, self.cfg.training.per_device_batch_size
         )
+        if self.cumulative_tokens.device != self.device:
+            # Hack to change the device of the cumulative tokens to the device of the batch
+            self.cumulative_tokens = self.cumulative_tokens.to(self.device)
+            # Hack to change the device of the total flops processed to the device of the batch
+            self.total_flops_processed = self.total_flops_processed.to(self.device)
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
+        bsize = len(batch["input_ids"])
         if self.cfg.training.detailed_logging:
             # Log the batch_idx and the data index
             with open(self.log_path, "a") as f:
@@ -230,15 +244,15 @@ class LightningModule(L.LightningModule):
         )
 
         # Add the number of valid tokens to the cumulative tokens
-        if self.cumulative_tokens.device != self.device:
-            # Hack to change the device of the cumulative tokens to the device of the batch
-            self.cumulative_tokens = self.cumulative_tokens.to(self.device)
         self.cumulative_tokens += batch["total_valid_tokens_cnt"]
+        # Calculate FLOPs for this batch based on the number of tokens processed
+        self.total_flops_processed += self.flops_per_batch * bsize
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
         if batch_idx % self.trainer.log_every_n_steps == 0:
             # First gather and sum tokens across processes
             gathered_tokens = self.all_gather(self.cumulative_tokens)
+            gathered_flops = self.all_gather(self.total_flops_processed)
 
             # Log the total tokens across all processes with that step
             if self.trainer.is_global_zero:
@@ -247,6 +261,7 @@ class LightningModule(L.LightningModule):
                         **results,
                         "epoch": self.trainer.current_epoch,
                         "cumulative_num_tokens": torch.sum(gathered_tokens),
+                        "total_flops_processed": torch.sum(gathered_flops),
                         "optimizer_step": self.global_step,
                     },
                     step=self.batch_step,
@@ -373,14 +388,14 @@ class LightningModule(L.LightningModule):
                     averaged_metrics[f"NLU_{dataset_name}_acc"] = avg_accuracy
 
         # Required for callback function (i.e., ModelCheckpoint) to see.
-        self.log_dict(averaged_metrics, prog_bar=False, sync_dist=True, logger=False)
-
-        # Log the aggregated metrics with the current global step.
         if self.trainer.is_global_zero:
-            self.logger.log_metrics(averaged_metrics, step=self.batch_step)
+            self.log_dict(averaged_metrics, prog_bar=False, sync_dist=False, logger=False)
 
         # Reset the validation step outputs
         self.validation_step_outputs = TensorDict({})
+
+        # Add barrier to ensure all processes have finished
+        self.trainer.barrier()
 
         return None
 

@@ -5,9 +5,10 @@ from typing import *
 import torch
 from tensordict import TensorDict
 from transformers.cache_utils import DynamicCache
-
+from calflops import calculate_flops
 from src.dataset.utils import batch_step_to_position
 from src.utils import is_torch_compile_possible, log_if_rank_zero
+from src.tokenization import ReLlamaTokenizer
 
 logger = logging.getLogger("ModelUtils")
 
@@ -336,3 +337,14 @@ def update_dynamic_cache(
                 dynamic_cache.value_cache[layer_idx] = torch.stack(new_value_cache)
 
     return dynamic_cache.key_cache[layer_idx], dynamic_cache.value_cache[layer_idx]
+
+
+def calculate_FLOPs(model: torch.nn.Module, tokenizer: ReLlamaTokenizer, max_seq_len: int) -> float:
+    flops, macs, params = calculate_flops(model=model, 
+                                        input_shape=(1, max_seq_len),
+                                        transformer_tokenizer=tokenizer,
+                                        include_backPropagation=True,
+                                        print_results=False,
+                                        print_detailed=False,
+                                        output_as_string=False)
+    return flops
