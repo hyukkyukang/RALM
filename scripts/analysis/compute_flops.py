@@ -16,7 +16,7 @@ from omegaconf import DictConfig
 
 from src.dataset import DataModule
 from src.model import LightningModule
-from calflops import calculate_flops
+from src.model.utils import calculate_FLOPs
 
 logger = logging.getLogger("FLOPsCounter")
 
@@ -34,15 +34,12 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Create random input
-    batch_size = 1
-    seq_len = 1024
+    max_seq_len = 1024
 
-    input_shape = (batch_size, seq_len)
-    flops, macs, params = calculate_flops(model=lightning_module.model, 
-                                        input_shape=input_shape,
-                                        transformer_tokenizer=data_module.tokenizer,
-                                        include_backPropagation=True)
-    print("FLOPs:%s   MACs:%s   Params:%s \n" %(flops, macs, params))
+    flops = calculate_FLOPs(model=lightning_module.model,
+                            tokenizer=data_module.tokenizer,
+                            max_seq_len=max_seq_len)
+    print(f"FLOPs: {flops}")
     return None
 
 

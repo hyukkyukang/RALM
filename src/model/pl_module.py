@@ -70,7 +70,7 @@ class LightningModule(L.LightningModule):
         self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
         # Register buffer for tracking total FLOPs processed
-        self.register_buffer("total_flops_processed", torch.tensor(0, dtype=torch.float64))
+        self.register_buffer("total_flops", torch.tensor(0, dtype=torch.int64))
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -105,7 +105,7 @@ class LightningModule(L.LightningModule):
         )
         return tokenizer
 
-    def initialize_language_model(self) -> Tuple[transformers.LlamaForCausalLM, float]:
+    def initialize_language_model(self) -> Tuple[transformers.LlamaForCausalLM, int]:
         # Initialize the model
         if self.cfg.model.name == "rellama":
             model = ReLlama(self.cfg, self.tokenizer)
@@ -129,7 +129,7 @@ class LightningModule(L.LightningModule):
             raise ValueError(f"Model name {self.cfg.model.name} not supported")
         
         # Compute FLOPs per batch
-        flops_per_batch: float = calculate_FLOPs(model=causal_model, 
+        flops_per_batch: int = calculate_FLOPs(model=causal_model, 
                                         tokenizer=self.tokenizer, 
                                         max_seq_len=self.cfg.model.max_length)
 
@@ -201,7 +201,7 @@ class LightningModule(L.LightningModule):
             # Hack to change the device of the cumulative tokens to the device of the batch
             self.cumulative_tokens = self.cumulative_tokens.to(self.device)
             # Hack to change the device of the total flops processed to the device of the batch
-            self.total_flops_processed = self.total_flops_processed.to(self.device)
+            self.total_flops = self.total_flops.to(self.device)
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
@@ -246,13 +246,13 @@ class LightningModule(L.LightningModule):
         # Add the number of valid tokens to the cumulative tokens
         self.cumulative_tokens += batch["total_valid_tokens_cnt"]
         # Calculate FLOPs for this batch based on the number of tokens processed
-        self.total_flops_processed += self.flops_per_batch * bsize
+        self.total_flops += self.flops_per_batch * bsize
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
         if batch_idx % self.trainer.log_every_n_steps == 0:
             # First gather and sum tokens across processes
             gathered_tokens = self.all_gather(self.cumulative_tokens)
-            gathered_flops = self.all_gather(self.total_flops_processed)
+            gathered_flops = self.all_gather(self.total_flops)
 
             # Log the total tokens across all processes with that step
             if self.trainer.is_global_zero:
@@ -261,7 +261,7 @@ class LightningModule(L.LightningModule):
                         **results,
                         "epoch": self.trainer.current_epoch,
                         "cumulative_num_tokens": torch.sum(gathered_tokens),
-                        "total_flops_processed": torch.sum(gathered_flops),
+                        "total_flops": torch.sum(gathered_flops),
                         "optimizer_step": self.global_step,
                     },
                     step=self.batch_step,
@@ -388,14 +388,14 @@ class LightningModule(L.LightningModule):
                     averaged_metrics[f"NLU_{dataset_name}_acc"] = avg_accuracy
 
         # Required for callback function (i.e., ModelCheckpoint) to see.
-        if self.trainer.is_global_zero:
-            self.log_dict(averaged_metrics, prog_bar=False, sync_dist=False, logger=False)
+        self.log_dict(averaged_metrics, prog_bar=False, sync_dist=False, logger=False)
 
         # Reset the validation step outputs
         self.validation_step_outputs = TensorDict({})
 
         # Add barrier to ensure all processes have finished
-        self.trainer.barrier()
+        if dist.is_initialized():
+            dist.barrier()
 
         return None
 
