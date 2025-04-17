@@ -340,6 +340,7 @@ def update_dynamic_cache(
 
 
 def calculate_FLOPs(model: torch.nn.Module, tokenizer: ReLlamaTokenizer, max_seq_len: int) -> int:
+    """Return non-embedding FLOPs of the model (in Millions)"""
     flops, macs, params = calculate_flops(model=model, 
                                         input_shape=(1, max_seq_len),
                                         transformer_tokenizer=tokenizer,
@@ -347,4 +348,5 @@ def calculate_FLOPs(model: torch.nn.Module, tokenizer: ReLlamaTokenizer, max_seq
                                         print_results=False,
                                         print_detailed=False,
                                         output_as_string=False)
+    flops = flops / 1e6
     return int(flops)
