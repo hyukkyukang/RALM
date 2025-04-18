@@ -50,7 +50,7 @@ class LambadaDataset(BaseDataset):
     def post_process_cache_path(self) -> str:
         return os.path.join(self.tokenized_cache_path, "lambada_post_processed")
 
-    def load_dataset(self, mode: str=None) -> None:
+    def load_dataset(self, mode: str = None) -> None:
         """Loads and preprocesses the LAMBADA dataset.
 
         Returns:
@@ -132,16 +132,16 @@ class LambadaDataCollator:
             batch_first=True,
             padding_value=self.tokenizer.pad_token_id,
         )
-        batch["pad_start_positions"] = [sum(item).item() for item in batch["attention_mask"]]
+        batch["pad_start_positions"] = [
+            sum(item).item() for item in batch["attention_mask"]
+        ]
         batch["attention_mask"] = torch.nn.utils.rnn.pad_sequence(
             batch["attention_mask"], batch_first=True, padding_value=0
         )
         # Collate the retrieved chunk token ids
         if "retrieved_input_ids" in examples[0]:
             flatten_retrieved_input_ids = [
-                item
-                for example in examples
-                for item in example["retrieved_input_ids"]
+                item for example in examples for item in example["retrieved_input_ids"]
             ]
             retrieved_input_ids = torch.tensor(
                 flatten_retrieved_input_ids,

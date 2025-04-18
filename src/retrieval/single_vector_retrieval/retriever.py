@@ -263,7 +263,11 @@ class SentenceTransformerRetriever:
         Search for the top-k nearest neighbors of a given query string.
         """
         return self.search_batch(
-            [query], k, return_as_text, passage_to_ignore_list=[passage_id_to_ignore], ensure_return_topk=ensure_return_topk
+            [query],
+            k,
+            return_as_text,
+            passage_to_ignore_list=[passage_id_to_ignore],
+            ensure_return_topk=ensure_return_topk,
         )[0]
 
     def search_batch(
@@ -281,7 +285,11 @@ class SentenceTransformerRetriever:
         query_embeddings = self.encode_queries(queries)
 
         return self.search_batch_with_embeddings(
-            query_embeddings, k, return_as_text, passage_to_ignore_list, ensure_return_topk
+            query_embeddings,
+            k,
+            return_as_text,
+            passage_to_ignore_list,
+            ensure_return_topk,
         )
 
     def search_with_tokens(
@@ -311,7 +319,11 @@ class SentenceTransformerRetriever:
         """
         query_embeddings = self.encode_tokens_batch(tokens_batch)
         return self.search_batch_with_embeddings(
-            query_embeddings, k, return_as_text, passage_to_ignore_list, ensure_return_topk
+            query_embeddings,
+            k,
+            return_as_text,
+            passage_to_ignore_list,
+            ensure_return_topk,
         )
 
     def search_batch_with_embeddings(
@@ -336,25 +348,35 @@ class SentenceTransformerRetriever:
 
         # Remove the passages to ignore
         if passage_to_ignore_list is not None:
-            indices = [self._filter_by_passage_id(lst, passage_to_ignore_list[b_idx]) for b_idx, lst in enumerate(indices)]
+            indices = [
+                self._filter_by_passage_id(lst, passage_to_ignore_list[b_idx])
+                for b_idx, lst in enumerate(indices)
+            ]
 
         # Get the top-k nearest neighbors
         indices: List[List[int]] = [lst[:original_k] for lst in indices]
 
         if ensure_return_topk:
             # Check if there are any batch indices with valid_indices less than the original k
-            valid_indices_per_batch: List[int] = [sum(i != -1 for i in lst) for lst in indices]
+            valid_indices_per_batch: List[int] = [
+                sum(i != -1 for i in lst) for lst in indices
+            ]
             # Search with increased nprobe if the number of valid indices is less than the original k
-            if any(valid_indices < original_k for valid_indices in valid_indices_per_batch):
+            if any(
+                valid_indices < original_k for valid_indices in valid_indices_per_batch
+            ):
                 # Search with increased nprobe
                 original_nprobe = self.index.nprobe
-                self.index.nprobe = k*2
+                self.index.nprobe = k * 2
                 _, indices = self.index.search(query_embeddings, k)
                 indices: List[List[int]] = [lst.tolist() for lst in indices]
 
                 # Remove the passages to ignore
                 if passage_to_ignore_list is not None:
-                    indices = [self._filter_by_passage_id(lst, passage_to_ignore_list[b_idx]) for b_idx, lst in enumerate(indices)]
+                    indices = [
+                        self._filter_by_passage_id(lst, passage_to_ignore_list[b_idx])
+                        for b_idx, lst in enumerate(indices)
+                    ]
 
                 # Get the top-k nearest neighbors
                 indices = [lst[:original_k] for lst in indices]
@@ -363,9 +385,12 @@ class SentenceTransformerRetriever:
                 self.index.nprobe = original_nprobe
 
             # Count valid indices
-            valid_indices_per_batch: List[int] = [sum(i != -1 for i in lst) for lst in indices]
-            assert all(valid_indices == original_k for valid_indices in valid_indices_per_batch), \
-                f"The number of valid indices is not equal to the original k: {valid_indices_per_batch} != {original_k}"
+            valid_indices_per_batch: List[int] = [
+                sum(i != -1 for i in lst) for lst in indices
+            ]
+            assert all(
+                valid_indices == original_k for valid_indices in valid_indices_per_batch
+            ), f"The number of valid indices is not equal to the original k: {valid_indices_per_batch} != {original_k}"
 
         # Convert the indices to text if requested
         if return_as_text:
@@ -424,8 +449,9 @@ class SentenceTransformerRetriever:
         token_ids = passage[chunk_start_idx:chunk_end_idx]
         return self.collection_tokenizer.decode(token_ids, skip_special_tokens=True)
 
-
-    def _filter_by_passage_id(self, global_chunk_ids: List[int], passage_id_to_ignore: int) -> List[int]:
+    def _filter_by_passage_id(
+        self, global_chunk_ids: List[int], passage_id_to_ignore: int
+    ) -> List[int]:
         """
         Filter the global chunk IDs by the passage ID to ignore.
         """

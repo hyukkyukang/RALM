@@ -25,6 +25,7 @@ def process_shard(shard_tuple: Tuple[int, str]) -> List[Tuple[int, int]]:
             bad_items.append((shard_idx, idx))
     return bad_items
 
+
 def check_all_items_parallel(path: str) -> None:
     # Load the meta data
     with open(path, "r") as f:
@@ -37,22 +38,24 @@ def check_all_items_parallel(path: str) -> None:
 
     # Process the shards in parallel
     with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-         for bad_items in tqdm.tqdm(pool.imap_unordered(process_shard, args_list),
-                                     total=len(args_list),
-                                     desc="Processing shards"):
-             if bad_items:
-                 all_bad_items.extend(bad_items)
+        for bad_items in tqdm.tqdm(
+            pool.imap_unordered(process_shard, args_list),
+            total=len(args_list),
+            desc="Processing shards",
+        ):
+            if bad_items:
+                all_bad_items.extend(bad_items)
 
     # Format the bad items
     bad_cnt = len(all_bad_items)
     tmp: List[Tuple[int, int]] = []
     for shard_idx, data_idx in all_bad_items:
         tmp.append((shard_idx, data_idx))
-    
+
     # Write the bad items to a file
     with open("bad_shard_ids.json", "w") as f:
         json.dump(tmp, f, indent=4)
-    
+
     logger.info(f"Bad shard count: {bad_cnt}")
 
 

@@ -114,24 +114,28 @@ class LightningModule(L.LightningModule):
             # Get the model name
             model_name: str = self.cfg.model.base_name
             if self.cfg.model.architecture is not None:
-                assert self.cfg.model.architecture in ["small", "medium", "large", "xl"], \
-                    f"Architecture {self.cfg.model.architecture} not supported"
+                assert self.cfg.model.architecture in [
+                    "small",
+                    "medium",
+                    "large",
+                    "xl",
+                ], f"Architecture {self.cfg.model.architecture} not supported"
                 if self.cfg.model.architecture != "small":
                     model_name = f"{model_name}-{self.cfg.model.architecture}"
             # Initialize the model
-            causal_model = AutoModelForCausalLM.from_pretrained(
-                model_name
-            )
+            causal_model = AutoModelForCausalLM.from_pretrained(model_name)
         elif self.cfg.model.name == "llama":
             model = Llama(self.cfg, self.tokenizer)
             causal_model = LlamaForCausalLM(base_model=model)
         else:
             raise ValueError(f"Model name {self.cfg.model.name} not supported")
-        
+
         # Compute FLOPs per batch
-        flops_per_batch_in_millions: int = calculate_FLOPs(model=causal_model, 
-                                        tokenizer=self.tokenizer, 
-                                        max_seq_len=self.cfg.model.max_length)
+        flops_per_batch_in_millions: int = calculate_FLOPs(
+            model=causal_model,
+            tokenizer=self.tokenizer,
+            max_seq_len=self.cfg.model.max_length,
+        )
 
         # Compile the model if the config is set to True and the GPU has the capability to compile the model
         if self.cfg.get("use_torch_compile", False):
@@ -619,7 +623,10 @@ class LightningModule(L.LightningModule):
         loss = outputs.loss
 
         result = {}
-        if self.trainer.is_global_zero and batch_idx % self.trainer.log_every_n_steps == 0:
+        if (
+            self.trainer.is_global_zero
+            and batch_idx % self.trainer.log_every_n_steps == 0
+        ):
             try:
                 perplexity = torch.exp(loss)
                 # Convert loss (nats) to bits
@@ -631,9 +638,9 @@ class LightningModule(L.LightningModule):
                 # Log regular metrics (these will be averaged between logging steps)
                 result = {
                     "loss": loss,
-                        "perplexity": perplexity,
-                        "bits_per_byte": bpb,
-                    }
+                    "perplexity": perplexity,
+                    "bits_per_byte": bpb,
+                }
             except Exception as e:
                 print(f"Error in _compiled_step: {e}")
                 result = {}

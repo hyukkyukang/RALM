@@ -8,10 +8,13 @@ from src.utils import log_if_rank_zero
 
 logger = logging.getLogger("TimeBasedCheckpoint")
 
+
 class TimeBasedCheckpoint(Callback):
     def __init__(self, save_interval_hours=6, dirpath="checkpoints"):
         super().__init__()
-        self.save_interval_seconds = save_interval_hours * 3600  # Convert hours to seconds
+        self.save_interval_seconds = (
+            save_interval_hours * 3600
+        )  # Convert hours to seconds
         self.last_checkpoint_time = time.time()
         self.dirpath = dirpath
 
@@ -20,8 +23,12 @@ class TimeBasedCheckpoint(Callback):
         current_time = time.time()
         if (current_time - self.last_checkpoint_time) >= self.save_interval_seconds:
             self.last_checkpoint_time = current_time
-            readable_time = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(current_time))
-            checkpoint_path = os.path.join(self.dirpath, f"checkpoint-{readable_time}.ckpt")
+            readable_time = time.strftime(
+                "%Y-%m-%d_%H-%M-%S", time.localtime(current_time)
+            )
+            checkpoint_path = os.path.join(
+                self.dirpath, f"checkpoint-{readable_time}.ckpt"
+            )
             # This method will make sure the checkpoint is saved by single process when using DDP
             trainer.save_checkpoint(checkpoint_path)
             log_if_rank_zero(logger, f"Checkpoint saved at {checkpoint_path}")

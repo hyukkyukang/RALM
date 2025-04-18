@@ -25,14 +25,18 @@ def count_avg_chars_per_token_in_batch(
 ) -> Union[float, Tuple[float, int]]:
     # Calculate character counts and valid tokens per sequence
     char_counts_per_seq: List[int] = [len(text) for text in full_texts]
-    valid_tokens_per_seq: List[int] = [int(mask.sum().item()) for mask in attention_masks]
+    valid_tokens_per_seq: List[int] = [
+        int(mask.sum().item()) for mask in attention_masks
+    ]
 
     # Convert to tensor for sum operation
     num_valid_tokens_total: int = sum(valid_tokens_per_seq)
     num_total_tokens_cnt: int = sum(char_counts_per_seq)
 
     # Calculate average characters per token
-    avg_char_in_token: float = float(num_total_tokens_cnt) / float(num_valid_tokens_total)
+    avg_char_in_token: float = float(num_total_tokens_cnt) / float(
+        num_valid_tokens_total
+    )
 
     if return_total_valid_tokens:
         return avg_char_in_token, num_valid_tokens_total

@@ -221,9 +221,7 @@ class CurationDataCollator(DataCollatorForLanguageModeling):
         # Collate the retrieved chunk token ids
         if "retrieved_input_ids" in examples[0]:
             flatten_retrieved_input_ids = [
-                item
-                for example in examples
-                for item in example["retrieved_input_ids"]
+                item for example in examples for item in example["retrieved_input_ids"]
             ]
             retrieved_input_ids = torch.tensor(
                 flatten_retrieved_input_ids,

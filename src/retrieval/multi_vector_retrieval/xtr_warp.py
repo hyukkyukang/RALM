@@ -50,7 +50,7 @@ class XTRWarpClient:
             k = self.topk
         if return_as_text is None:
             return_as_text = self.return_as_text
-        
+
         # Prepare the request payload
         payload = {"query": query, "k": k, "return_as_text": return_as_text}
 
@@ -67,7 +67,10 @@ class XTRWarpClient:
             raise Exception(f"Search request failed: {error_message}")
 
     def search_multiple(
-        self, queries: List[str], k: Optional[int] = None, return_as_text: Optional[bool] = None
+        self,
+        queries: List[str],
+        k: Optional[int] = None,
+        return_as_text: Optional[bool] = None,
     ) -> Union[List[List[int]], List[List[str]]]:
         """
         Perform search for multiple queries by sending a request to the search_multiple endpoint.
@@ -85,7 +88,7 @@ class XTRWarpClient:
             k = self.topk
         if return_as_text is None:
             return_as_text = self.return_as_text
-        
+
         # Prepare the request payload
         payload = {"queries": queries, "k": k, "return_as_text": return_as_text}
 
@@ -113,7 +116,10 @@ class XTRWarpClient:
             return results
 
     def search_batch(
-        self, queries: List[str], k: Optional[int] = None, return_as_text: Optional[bool] = None
+        self,
+        queries: List[str],
+        k: Optional[int] = None,
+        return_as_text: Optional[bool] = None,
     ) -> Union[List[List[int]], List[List[str]]]:
         """
         Perform batch search for multiple queries at once by sending a request to the search_batch endpoint.
@@ -131,7 +137,7 @@ class XTRWarpClient:
             k = self.topk
         if return_as_text is None:
             return_as_text = self.return_as_text
-        
+
         # Prepare the request payload
         payload = {"queries": queries, "k": k, "return_as_text": return_as_text}
 
@@ -184,7 +190,9 @@ class XTRWarpClient:
 
 
 if __name__ == "__main__":
-    searcher = Retriever(address="http://localhost", port=5000, topk=3, return_as_text=False)
+    searcher = Retriever(
+        address="http://localhost", port=5000, topk=3, return_as_text=False
+    )
 
     # Test single search
     print("Testing single search...")

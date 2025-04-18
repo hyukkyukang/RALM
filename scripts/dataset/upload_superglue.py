@@ -20,6 +20,7 @@ DATASET_NAME_MAPPING = {
     "WSC": "wsc",
 }
 
+
 def get_dummy_value(expected_type):
     """Return a dummy value that matches the expected primitive type."""
     if expected_type == bool:
@@ -32,6 +33,7 @@ def get_dummy_value(expected_type):
         return ""
     else:
         return -1
+
 
 def infer_schema(value):
     """
@@ -50,6 +52,7 @@ def infer_schema(value):
     else:
         return type(value)
 
+
 def compute_recursive_schema(dict_list: List[Dict]) -> dict:
     """
     Compute a recursive schema for a list of dictionaries.
@@ -66,6 +69,7 @@ def compute_recursive_schema(dict_list: List[Dict]) -> dict:
             else:
                 schema[key] = merge_schema(schema[key], s)
     return schema
+
 
 def merge_schema(s1, s2):
     """
@@ -89,6 +93,7 @@ def merge_schema(s1, s2):
         return s1
     return s1
 
+
 def merge_dict_schema(dict1: dict, dict2: dict) -> dict:
     merged = {}
     keys = set(dict1.keys()) | set(dict2.keys())
@@ -100,6 +105,7 @@ def merge_dict_schema(dict1: dict, dict2: dict) -> dict:
         else:
             merged[key] = dict2[key]
     return merged
+
 
 def fill_dummy_values(item: dict, schema: dict) -> None:
     """
@@ -136,7 +142,10 @@ def fill_dummy_values(item: dict, schema: dict) -> None:
                             if isinstance(elem, dict):
                                 fill_dummy_values(elem, expected["schema"])
 
-def add_dummy_labels_recursive(test_list: List[Dict], reference_schema: dict) -> List[Dict]:
+
+def add_dummy_labels_recursive(
+    test_list: List[Dict], reference_schema: dict
+) -> List[Dict]:
     """
     For each test sample, recursively fill in missing keys based on the reference schema.
     """
@@ -144,26 +153,37 @@ def add_dummy_labels_recursive(test_list: List[Dict], reference_schema: dict) ->
         fill_dummy_values(item, reference_schema)
     return test_list
 
+
 def main():
     # Instantiate HfApi to check repository status.
     api = HfApi()
     try:
         existing_files = api.list_repo_files(DATASET_REPO, repo_type="dataset")
     except Exception as e:
-        print("Dataset repository does not exist yet or is not accessible. A new repository will be created.")
+        print(
+            "Dataset repository does not exist yet or is not accessible. A new repository will be created."
+        )
         existing_files = []
 
     # Load the SuperGLUE dataset folders.
     superglue_folders: List[str] = os.listdir(SUPERGLUE_DATA_DIR)
     for folder in superglue_folders:
-        assert folder in DATASET_NAME_MAPPING, f"{folder} is not in the DATASET_NAME_MAPPING values"
+        assert (
+            folder in DATASET_NAME_MAPPING
+        ), f"{folder} is not in the DATASET_NAME_MAPPING values"
 
     for dataset_name in tqdm.tqdm(superglue_folders):
         print(f"Processing {dataset_name}...")
 
-        train_list = file_utils.read_jsonl_file(os.path.join(SUPERGLUE_DATA_DIR, dataset_name, "train.jsonl"))
-        validation_list = file_utils.read_jsonl_file(os.path.join(SUPERGLUE_DATA_DIR, dataset_name, "val.jsonl"))
-        test_list = file_utils.read_jsonl_file(os.path.join(SUPERGLUE_DATA_DIR, dataset_name, "test.jsonl"))
+        train_list = file_utils.read_jsonl_file(
+            os.path.join(SUPERGLUE_DATA_DIR, dataset_name, "train.jsonl")
+        )
+        validation_list = file_utils.read_jsonl_file(
+            os.path.join(SUPERGLUE_DATA_DIR, dataset_name, "val.jsonl")
+        )
+        test_list = file_utils.read_jsonl_file(
+            os.path.join(SUPERGLUE_DATA_DIR, dataset_name, "test.jsonl")
+        )
 
         # Compute the reference schema from train and validation.
         schema_train = compute_recursive_schema(train_list)
@@ -172,22 +192,24 @@ def main():
 
         # Recursively add dummy values to test samples.
         test_list = add_dummy_labels_recursive(test_list, reference_schema)
-    
+
         train_dataset = Dataset.from_list(train_list)
         validation_dataset = Dataset.from_list(validation_list)
         test_dataset = Dataset.from_list(test_list)
-        
-        dataset = DatasetDict({
-            "train": train_dataset,
-            "validation": validation_dataset,
-            "test": test_dataset
-        })
-        
+
+        dataset = DatasetDict(
+            {
+                "train": train_dataset,
+                "validation": validation_dataset,
+                "test": test_dataset,
+            }
+        )
+
         # Force all splits to have the same features as the training split.
         common_features = train_dataset.features
         dataset["validation"] = dataset["validation"].cast(common_features)
         dataset["test"] = dataset["test"].cast(common_features)
-        
+
         config_name = DATASET_NAME_MAPPING[dataset_name]
         config_file = f"{config_name}/dataset_info.json"
         if config_file in existing_files:
@@ -198,8 +220,7 @@ def main():
         print(f"Uploaded {dataset_name} successfully!")
 
     print("All SuperGLUE datasets processed successfully!")
-    
 
-    
+
 if __name__ == "__main__":
     main()
