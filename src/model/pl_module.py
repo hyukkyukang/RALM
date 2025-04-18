@@ -55,7 +55,7 @@ class LightningModule(L.LightningModule):
         self.tokenizer: Union[ReLlamaTokenizer, AutoTokenizer] = (
             self.initialize_tokenizer() if tokenizer is None else tokenizer
         )
-        self.model, self.flops_per_batch = self.initialize_language_model()
+        self.model, self.flops_per_batch_in_millions = self.initialize_language_model()
         # Store all arguments within the model checkpoint.
         self.save_hyperparameters(cfg)
         # For efficient training
@@ -129,7 +129,7 @@ class LightningModule(L.LightningModule):
             raise ValueError(f"Model name {self.cfg.model.name} not supported")
         
         # Compute FLOPs per batch
-        flops_per_batch: int = calculate_FLOPs(model=causal_model, 
+        flops_per_batch_in_millions: int = calculate_FLOPs(model=causal_model, 
                                         tokenizer=self.tokenizer, 
                                         max_seq_len=self.cfg.model.max_length)
 
@@ -156,7 +156,7 @@ class LightningModule(L.LightningModule):
             )
             causal_model.gradient_checkpointing_enable()
 
-        return causal_model, flops_per_batch
+        return causal_model, flops_per_batch_in_millions
 
     def forward(
         self,
@@ -246,13 +246,13 @@ class LightningModule(L.LightningModule):
         # Add the number of valid tokens to the cumulative tokens
         self.cumulative_tokens += batch["total_valid_tokens_cnt"]
         # Calculate FLOPs for this batch based on the number of tokens processed
-        self.total_flops += self.flops_per_batch * bsize
+        self.total_flops_in_millions += self.flops_per_batch_in_millions * bsize
 
         # Perform selective logging (i.e., only at the logging steps) of cumulative tokens
         if batch_idx % self.trainer.log_every_n_steps == 0:
             # First gather and sum tokens across processes
             gathered_tokens = self.all_gather(self.cumulative_tokens)
-            gathered_flops = self.all_gather(self.total_flops)
+            gathered_flops = self.all_gather(self.total_flops_in_millions)
 
             # Log the total tokens across all processes with that step
             if self.trainer.is_global_zero:
@@ -261,7 +261,7 @@ class LightningModule(L.LightningModule):
                         **results,
                         "epoch": self.trainer.current_epoch,
                         "cumulative_num_tokens": torch.sum(gathered_tokens),
-                        "total_flops": torch.sum(gathered_flops),
+                        "total_flops_(M)": torch.sum(gathered_flops),
                         "optimizer_step": self.global_step,
                     },
                     step=self.batch_step,
