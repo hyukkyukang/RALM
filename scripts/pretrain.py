@@ -1,11 +1,15 @@
 import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", message=".*It is recommended to use `self.log.*sync_dist=True.*`.*")
+warnings.filterwarnings(
+    "ignore", message=".*It is recommended to use `self.log.*sync_dist=True.*`.*"
+)
 import torch
+
 
 def silent_warn_once(*args, **kwargs):
     pass
+
 
 torch._dynamo.utils.warn_once = silent_warn_once
 import glob

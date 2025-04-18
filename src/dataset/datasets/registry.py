@@ -33,7 +33,6 @@ DATASET_REGISTRY: Dict[str, Type[BaseDataset]] = {
     "wikitext": WikiTextDataset,
     "curation": CurationDataset,
     "pile": PileDataset,
-    
     # GLUE datasets
     "glue_cola": GLUECoLADataset,
     "glue_sst2": GLUESST2Dataset,
@@ -45,7 +44,6 @@ DATASET_REGISTRY: Dict[str, Type[BaseDataset]] = {
     "glue_wnli": GLUEWNLIDataset,
     "glue_qqp": GLUEQQPDataset,
     "glue_stsb": GLUESTSBDataset,
-    
     # SuperGLUE datasets
     "superglue_boolq": SuperGLUEBoolQDataset,
     "superglue_cb": SuperGLUECBDataset,

@@ -514,7 +514,8 @@ def main(cfg: DictConfig) -> None:
 
     # Retrieval parameters
     retrieval_block_size = (
-        cfg.model.retrieval_chunk_size * cfg.model.num_chunks_per_group
+        cfg.model.retrieval_chunk_size
+        * cfg.model.num_chunks_per_group
         * cfg.model.num_groups_per_block
     )
 

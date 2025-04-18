@@ -303,7 +303,7 @@ def update_dynamic_cache(
                 for batch_idx, pad_start_idx in enumerate(pad_start_positions):
                     # Insert the current query at the position before the non-pad token
                     insert_position = pad_start_idx - 1
-                    
+
                     # Concatenate the new key and value states with the old key and value states
                     new_key_cache.append(
                         torch.cat(
@@ -339,14 +339,18 @@ def update_dynamic_cache(
     return dynamic_cache.key_cache[layer_idx], dynamic_cache.value_cache[layer_idx]
 
 
-def calculate_FLOPs(model: torch.nn.Module, tokenizer: ReLlamaTokenizer, max_seq_len: int) -> int:
+def calculate_FLOPs(
+    model: torch.nn.Module, tokenizer: ReLlamaTokenizer, max_seq_len: int
+) -> int:
     """Return non-embedding FLOPs of the model (in Millions)"""
-    flops, macs, params = calculate_flops(model=model, 
-                                        input_shape=(1, max_seq_len),
-                                        transformer_tokenizer=tokenizer,
-                                        include_backPropagation=True,
-                                        print_results=False,
-                                        print_detailed=False,
-                                        output_as_string=False)
+    flops, macs, params = calculate_flops(
+        model=model,
+        input_shape=(1, max_seq_len),
+        transformer_tokenizer=tokenizer,
+        include_backPropagation=True,
+        print_results=False,
+        print_detailed=False,
+        output_as_string=False,
+    )
     flops = flops / 1e6
     return int(flops)

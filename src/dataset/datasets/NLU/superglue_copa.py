@@ -2,8 +2,11 @@ from typing import *
 
 from src.dataset.datasets.NLU.text_to_text import TextToTextDataset
 
+
 class SuperGLUECOPADataset(TextToTextDataset):
-    def _preprocess_fn_for_text_to_text(self, example: Dict[str, Any]) -> Dict[str, Any]:
+    def _preprocess_fn_for_text_to_text(
+        self, example: Dict[str, Any]
+    ) -> Dict[str, Any]:
         # Determine question type: cause or effect
         question_type = "cause" if example["question"] == 0 else "effect"
 

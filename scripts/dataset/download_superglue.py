@@ -11,24 +11,28 @@ extract_folder = "superglue_data"
 # Folders to remove
 FOLDERS_TO_REMOVE = ["AX-b", "AX-g"]
 
+
 # Function to download the dataset
 def download_dataset(url, filename):
     print(f"Downloading {filename}...")
     urllib.request.urlretrieve(url, filename)
     print("Download complete.")
 
+
 # Function to extract the dataset
 def extract_dataset(zip_path, extract_to):
     print(f"Extracting {zip_path}...")
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
         zip_ref.extractall(extract_to)
     print("Extraction complete.")
+
 
 # Function to remove the zip file
 def cleanup_zipfile(zip_path):
     print(f"Removing {zip_path}...")
     os.remove(zip_path)
     print("Zip file cleanup complete.")
+
 
 # Function to remove folders
 def remove_folders(base_path, folders):
@@ -40,6 +44,7 @@ def remove_folders(base_path, folders):
         else:
             print(f"{folder_path} does not exist.")
     print("Folder cleanup complete.")
+
 
 # Main execution
 if __name__ == "__main__":

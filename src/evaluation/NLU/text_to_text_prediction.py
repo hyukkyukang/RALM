@@ -21,12 +21,11 @@ def predict_next_tokens_from_choices(
     for bidx, token_ids in enumerate(batch_context_token_ids):
         # Truncate the token ids to the max length
         if token_ids.shape[0] > model.config.max_position_embeddings:
-            logger.warning(f"Truncating the token ids to the max length: {token_ids.shape[0]} -> {model.config.max_position_embeddings}")
-            token_ids = token_ids[:model.config.max_position_embeddings]
-        outputs = model(
-            token_ids.unsqueeze(0),
-            retrieved_chunk_ids=retrieved_chunk_ids
-        )
+            logger.warning(
+                f"Truncating the token ids to the max length: {token_ids.shape[0]} -> {model.config.max_position_embeddings}"
+            )
+            token_ids = token_ids[: model.config.max_position_embeddings]
+        outputs = model(token_ids.unsqueeze(0), retrieved_chunk_ids=retrieved_chunk_ids)
         logits: torch.Tensor = outputs.logits[0, -1]  # Get logits from the outputs
         # Get the logits for the choices
         choice_logits: torch.Tensor = logits[token_ids_of_choices[bidx]]
@@ -59,11 +58,13 @@ def evaluate_text_to_text_prediction(
     batch_target_token_id: List[int] = []
     batch_choice_token_ids: List[List[int]] = []
     for token_ids, target_text in zip(batch_token_ids, target_texts):
-        context_token_ids, target_token_id, other_choice_token_ids = extract_context_target_and_choices(
-            token_ids=token_ids,
-            target_text=target_text,
-            choices=text_choices,
-            tokenizer=tokenizer,
+        context_token_ids, target_token_id, other_choice_token_ids = (
+            extract_context_target_and_choices(
+                token_ids=token_ids,
+                target_text=target_text,
+                choices=text_choices,
+                tokenizer=tokenizer,
+            )
         )
         batch_context_token_ids.append(context_token_ids)
         batch_target_token_id.append(target_token_id)
@@ -79,8 +80,7 @@ def evaluate_text_to_text_prediction(
 
     # Check if the predicted token ids are the same as the target token ids
     batch_is_correct: List[bool] = [
-        selected_token_ids[idx] == batch_target_token_id[idx]
-        for idx in range(bsize)
+        selected_token_ids[idx] == batch_target_token_id[idx] for idx in range(bsize)
     ]
 
     # Check if the predicted word is the same as the last word
@@ -97,9 +97,15 @@ def extract_context_target_and_choices(
 ) -> Tuple[List[int], List[int], List[int]]:
     """Split the token ids into context and target."""
     # Find the number of tokens for the target token
-    num_tokens_for_target_token_wo_space: int = len(tokenizer.encode(target_text, add_special_tokens=False))
-    num_tokens_for_target_token_w_space: int = len(tokenizer.encode(" " + target_text, add_special_tokens=False))
-    num_tokens_for_target_token: int = min(num_tokens_for_target_token_wo_space, num_tokens_for_target_token_w_space)
+    num_tokens_for_target_token_wo_space: int = len(
+        tokenizer.encode(target_text, add_special_tokens=False)
+    )
+    num_tokens_for_target_token_w_space: int = len(
+        tokenizer.encode(" " + target_text, add_special_tokens=False)
+    )
+    num_tokens_for_target_token: int = min(
+        num_tokens_for_target_token_wo_space, num_tokens_for_target_token_w_space
+    )
     # Find the context token ids
     context_token_ids: List[int] = token_ids[:-num_tokens_for_target_token].tolist()
     # Find the target token ids
@@ -107,10 +113,14 @@ def extract_context_target_and_choices(
     target_token_id: int = target_token_ids[0]
     # Decode the context and target token ids
     context_text: str = tokenizer.decode(context_token_ids, skip_special_tokens=True)
-    decoded_target_text: str = tokenizer.decode(target_token_ids, skip_special_tokens=True)
+    decoded_target_text: str = tokenizer.decode(
+        target_token_ids, skip_special_tokens=True
+    )
 
     # Check the target text is the same as the decoded target text
-    assert target_text in decoded_target_text, f"{target_text} is not sub-string of {decoded_target_text}"
+    assert (
+        target_text in decoded_target_text
+    ), f"{target_text} is not sub-string of {decoded_target_text}"
 
     # Find the alternative token ids for the target text
     choice_token_ids: List[int] = []
@@ -120,11 +130,13 @@ def extract_context_target_and_choices(
             new_texts = context_text + decoded_target_text.replace(target_text, choice)
             # Tokenize the new texts
             new_token_ids = tokenizer.encode(new_texts)
-            new_token_ids = new_token_ids[:len(context_token_ids)+1]
+            new_token_ids = new_token_ids[: len(context_token_ids) + 1]
             # Check the context part is the same
             decoded_new_token_ids = tokenizer.decode(new_token_ids[:-1])
             decoded_context_token_ids = tokenizer.decode(context_token_ids)
-            assert decoded_new_token_ids == decoded_context_token_ids, f"Context part is not the same: {decoded_new_token_ids} != {decoded_context_token_ids}"
+            assert (
+                decoded_new_token_ids == decoded_context_token_ids
+            ), f"Context part is not the same: {decoded_new_token_ids} != {decoded_context_token_ids}"
 
             # Append the choice token ids
             choice_token_ids.append(new_token_ids[-1])
@@ -132,6 +144,8 @@ def extract_context_target_and_choices(
     # Check that the choice token ids are all different
     # If not, we need to generate more than one tokens
     possible_choices: List[int] = [target_token_id] + choice_token_ids
-    assert len(possible_choices) == len(set(possible_choices)), "Choice token ids are not all different"
+    assert len(possible_choices) == len(
+        set(possible_choices)
+    ), "Choice token ids are not all different"
 
     return context_token_ids, target_token_id, choice_token_ids

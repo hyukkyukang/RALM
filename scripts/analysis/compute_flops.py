@@ -3,8 +3,10 @@ import warnings
 warnings.simplefilter(action="ignore", category=FutureWarning)
 import torch
 
+
 def silent_warn_once(*args, **kwargs):
     pass
+
 
 torch._dynamo.utils.warn_once = silent_warn_once
 import logging
@@ -19,6 +21,7 @@ from src.model import LightningModule
 from src.model.utils import calculate_FLOPs
 
 logger = logging.getLogger("FLOPsCounter")
+
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:
@@ -36,9 +39,11 @@ def main(cfg: DictConfig) -> None:
     # Create random input
     max_seq_len = 1024
 
-    flops = calculate_FLOPs(model=lightning_module.model,
-                            tokenizer=data_module.tokenizer,
-                            max_seq_len=max_seq_len)
+    flops = calculate_FLOPs(
+        model=lightning_module.model,
+        tokenizer=data_module.tokenizer,
+        max_seq_len=max_seq_len,
+    )
     print(f"FLOPs: {flops}")
     return None
 

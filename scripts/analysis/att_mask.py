@@ -34,9 +34,7 @@ def main(cfg: DictConfig) -> None:
     retrieval_chunk_group_size = (
         cfg.model.retrieval_chunk_size * cfg.model.num_chunks_per_group
     )
-    retrieval_block_size = (
-        retrieval_chunk_group_size * cfg.model.num_groups_per_block
-    )
+    retrieval_block_size = retrieval_chunk_group_size * cfg.model.num_groups_per_block
     num_block_per_input = math.ceil(input_length / chunk_size) - 1
     retrieval_block_len = retrieval_block_size * num_block_per_input
     kv_with_retrieval_length = input_length + retrieval_block_len

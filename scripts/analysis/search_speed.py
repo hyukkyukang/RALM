@@ -17,6 +17,7 @@ logger = logging.getLogger("AnalyzeSearchSpeed")
 torch._dynamo.config.cache_size_limit = 1000
 torch.set_float32_matmul_precision("high")
 
+
 def run_benchmark(
     searcher: SentenceTransformerRetriever,
     queries: List[str],
@@ -120,6 +121,7 @@ def print_comparison_table(results: Dict[str, Dict[str, Any]], queries: List[str
             print(f"Speedup of {method} vs single: {speedup:.2f}x")
 
     print("=" * 80)
+
 
 @hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
 def main(cfg: DictConfig) -> None:

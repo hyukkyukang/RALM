@@ -12,6 +12,7 @@ from src.dataset.utils import batch_step_to_position
 
 _T_co = TypeVar("_T_co", covariant=True)
 
+
 class MyProgressBar(TQDMProgressBar):
     """Custom progress bar that properly handles distributed training scenarios.
     Extends PyTorch Lightning's TQDMProgressBar to correctly display total batch counts
@@ -20,10 +21,10 @@ class MyProgressBar(TQDMProgressBar):
 
     def init_train_tqdm(self) -> Tqdm:
         """Initializes a custom training progress bar.
-        
+
         Overrides the default implementation to ensure proper display of total batch count
         during distributed data parallel (DDP) training, especially when resuming from checkpoints.
-        
+
         Returns:
             Tqdm: Configured progress bar instance with correct total batch count.
         """
@@ -39,6 +40,7 @@ class MyProgressBar(TQDMProgressBar):
             total=self.total_train_batches,
         )
 
+
 class DistributedResumableRandomSampler(Sampler[_T_co]):
     """Distributed sampler with resumable state via saved global indices.
 
@@ -49,7 +51,16 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
     accumulation cycle.
     """
 
-    def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True, seed=42, drop_last=True, gradient_accumulation_steps=1):
+    def __init__(
+        self,
+        dataset,
+        num_replicas=None,
+        rank=None,
+        shuffle=True,
+        seed=42,
+        drop_last=True,
+        gradient_accumulation_steps=1,
+    ):
         self.dataset = dataset
         self.shuffle = shuffle
         self.seed = seed
@@ -62,12 +73,20 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
 
         # Get the number of replicas
         if num_replicas is None:
-            num_replicas = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
+            num_replicas = (
+                torch.distributed.get_world_size()
+                if torch.distributed.is_initialized()
+                else 1
+            )
         self.num_replicas = num_replicas
 
         # Get the rank of the current process
         if rank is None:
-            rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+            rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
         self.rank = rank
 
         # If the dataset length is evenly divisible by # of replicas, then there
@@ -92,11 +111,11 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
     def indices(self):
         if not hasattr(self, "_indices"):
             assert self.global_indices is not None, f"global_indices are not set"
-            self._indices = self.global_indices[self.rank::self.num_replicas]
+            self._indices = self.global_indices[self.rank :: self.num_replicas]
         return self._indices
 
     def set_epoch(self, epoch):
-        """ Set epoch to maintain shuffling consistency """
+        """Set epoch to maintain shuffling consistency"""
         # If the sampler has just resumed, we don't need to shuffle the indices
         # We have already loaded the information from the checkpoint
         if self.has_just_resumed:
@@ -118,27 +137,32 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
         self.global_indices = global_indices
         self.position = 0  # Reset position at new epoch
 
-    def set_position_by_batch_step(self, batch_step: int, per_device_batch_size: int) -> None:
-        """ Set position in dataset """
+    def set_position_by_batch_step(
+        self, batch_step: int, per_device_batch_size: int
+    ) -> None:
+        """Set position in dataset"""
         # Convert to the actual position in the dataset
-        self.position = batch_step_to_position(batch_step, per_device_batch_size) % self.num_position_per_device
+        self.position = (
+            batch_step_to_position(batch_step, per_device_batch_size)
+            % self.num_position_per_device
+        )
 
     def __iter__(self):
-        return iter(self.indices[self.position:])
+        return iter(self.indices[self.position :])
 
     def __len__(self):
         return len(self.indices)
 
     def state_dict(self):
-        """ Save sampler state including global step """
+        """Save sampler state including global step"""
         return {
             "position": self.position,
             "epoch": self.epoch,
-            "global_indices": self.global_indices
+            "global_indices": self.global_indices,
         }
 
     def load_state_dict(self, state):
-        """ Restore sampler state """
+        """Restore sampler state"""
         self.position = state["position"]
         self.epoch = state["epoch"]
         self.global_indices = state["global_indices"]
@@ -147,14 +171,14 @@ class DistributedResumableRandomSampler(Sampler[_T_co]):
 
 class ResumableDataLoader(DataLoader):
     """Extended DataLoader that supports checkpointing and resumption of training.
-    
+
     Adds state saving and loading capabilities to PyTorch's DataLoader, enabling
     training to resume from the exact batch where it was stopped.
     """
-    
+
     def __len__(self):
         """Returns the number of batches in the dataloader.
-        
+
         Properly handles length calculation when using batch samplers.
         """
         # If a batch_sampler is present, its length is used as the number of batches.
@@ -164,7 +188,7 @@ class ResumableDataLoader(DataLoader):
 
     def state_dict(self):
         """Creates a serializable state dictionary if the sampler supports it.
-        
+
         Returns:
             dict: Current sampler state or empty dict if sampler doesn't support checkpointing
         """
@@ -174,10 +198,9 @@ class ResumableDataLoader(DataLoader):
 
     def load_state_dict(self, state):
         """Restores dataloader state from a checkpoint if the sampler supports it.
-        
+
         Args:
             state (dict): Previously saved state dictionary
         """
         if hasattr(self.sampler, "load_state_dict"):
             self.sampler.load_state_dict(state)
-

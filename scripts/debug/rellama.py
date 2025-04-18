@@ -44,7 +44,6 @@ def main(cfg: DictConfig) -> None:
     # Load data module and model
     data_module = DataModule(cfg=cfg, is_test=True)
 
-
     # Get the data
     test_dataloader = data_module.test_dataloader()
     for batch in test_dataloader:
