@@ -22,7 +22,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 torch._dynamo.config.cache_size_limit = 10000
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Make use_torch_compile to False
     cfg.use_torch_compile = False

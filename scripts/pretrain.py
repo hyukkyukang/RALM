@@ -225,7 +225,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
     return clean_evaluation_metrics
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Change the tag and root_dir_path if the config is debug
     tag_prefix = "debug_" if cfg.is_debug else ""

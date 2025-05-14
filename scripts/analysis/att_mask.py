@@ -17,7 +17,7 @@ from src.model.rellama.mask import (
 )
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     """Visualize the attention scores of document causal mask mod.
 

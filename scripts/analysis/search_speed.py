@@ -123,7 +123,7 @@ def print_comparison_table(results: Dict[str, Dict[str, Any]], queries: List[str
     print("=" * 80)
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Configure logging
     logging.basicConfig(

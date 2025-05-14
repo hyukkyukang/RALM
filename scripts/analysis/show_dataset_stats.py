@@ -11,7 +11,7 @@ logger = logging.getLogger("Evaluation")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Get the dataset
     data_module = DataModule(cfg=cfg)

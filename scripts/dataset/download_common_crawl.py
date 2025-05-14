@@ -6,7 +6,7 @@ from warcio.archiveiterator import ArchiveIterator
 from bs4 import BeautifulSoup
 
 COMMON_CRAWL_URL = "https://data.commoncrawl.org/"
-DOWNLOAD_DIR = "/root/RETRO/data/common_crawl"
+DOWNLOAD_DIR = "/home/user/RALM/data/common_crawl"
 TEXT_DIR = "extracted_text"
 INDEX_NAME = "CC-MAIN-2024-51"  # Replace with the latest Common Crawl index
 

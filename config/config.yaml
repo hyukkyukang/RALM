@@ -2,7 +2,7 @@
 use_torch_compile: True
 seed: 10
 tag: "default"
-root_dir_path: "/root/RETRO/"
+root_dir_path: "/home/user/RALM/"
 log_dir: "runs"
 is_debug: False
 notify_start: False
