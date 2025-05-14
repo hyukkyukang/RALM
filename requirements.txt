@@ -17,19 +17,3 @@ accelerate
 wandb
 zstandard # This is for the pile dataset from huggingface
 calflops
-
-# packages for dataset
-ftfy
-langdetect
-numpy
-pandas
-boto3
-tqdm
-regex
-bs4
-newspaper3k
-htmlmin
-tldextract
-lxml_html_clean
-hkkang_utils
-pyyaml
