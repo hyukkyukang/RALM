@@ -24,6 +24,7 @@ services:
   
       command: >
         bash -c "
+          set -e
           # 1) adjust UID / GID before any 'user' process starts
           groupmod -o -g ${GID} user &&
           usermod  -o -u ${UID} -g ${GID} user &&
