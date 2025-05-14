@@ -1,36 +1,42 @@
 services:
-    RETRO:
-        shm_size: 24gb
-        ulimits:
-            memlock: -1
-        image: hyukkyukang/retro:latest
-        container_name: RETRO
-        stdin_open: true
-        tty: true
-        user: $UID:$GID
-        network_mode: "host"
-        environment:
-            - TZ=Asia/Seoul
-        volumes:
-            - /etc/timezone:/etc/timezone:ro 
-            - ./:/root/RETRO/
-            - /mnt/sdc/hkkang:/mnt/md0/hkkang
-        working_dir: /root/RETRO
-        command: |
-            sh -c '
-            echo "root" | su root -c "
-            if ! id -u user > /dev/null 2>&1; then
-                groupadd -g ${GID} usergroup || true
-                useradd -s /bin/bash -m user -u ${UID} -g ${GID}
-                echo \"user:user\" | chpasswd
-                echo \"user ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers
-            fi
-            echo \"export PATH=/home/user/.local/bin:\$PATH\" >> /home/user/.bashrc
-            echo \"export PYTHONPATH=/root/RETRO/\" >> /home/user/.bashrc
-            exec tail -f /dev/null
-            "'
-        deploy:
-            resources:
-                reservations:
-                    devices:
-                        - capabilities: [gpu]
+    RALM:
+      image: hyukkyukang/ralm:py3.13-cuda-12.8.1-cudnn-devel-ubuntu24.04
+      container_name: RALM
+  
+      shm_size: 24gb
+      ulimits:
+        memlock: -1
+      stdin_open: true
+      tty: true
+      user: root
+      network_mode: "host"
+  
+      environment:
+        - TZ=Asia/Seoul
+        - UID=${UID}
+        - GID=${GID}
+  
+      volumes:
+        - /etc/timezone:/etc/timezone:ro
+        - ./:/home/user/RALM
+        - /mnt:/mnt
+      working_dir: /home/user/RALM
+  
+      command: >
+        bash -c "
+          # 1) adjust UID / GID before any 'user' process starts
+          groupmod -o -g ${GID} user &&
+          usermod  -o -u ${UID} -g ${GID} user &&
+          chown -R ${UID}:${GID} /home/user &&
+          # 2) ensure user-site executables are on PATH
+          echo \"export PATH=$HOME/.local/bin:$PATH\" >> /home/user/.bashrc &&
+          # 3) drop privileges and stay alive
+          su - user -c 'exec tail -f /dev/null'
+        "
+  
+      deploy:
+        resources:
+          reservations:
+            devices:
+              - capabilities: [gpu]
+  
