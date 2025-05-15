@@ -8,7 +8,7 @@ services:
         memlock: -1
       stdin_open: true
       tty: true
-      user: root
+      user: user
       network_mode: "host"
   
       environment:
@@ -22,18 +22,15 @@ services:
         - /mnt:/mnt
       working_dir: /home/user/RALM
   
-      command: >
-        bash -c "
+      command: |
+        bash -c '
           set -e
-          # 1) adjust UID / GID before any 'user' process starts
-          groupmod -o -g ${GID} user &&
-          usermod  -o -u ${UID} -g ${GID} user &&
-          chown -R ${UID}:${GID} /home/user &&
-          # 2) ensure user-site executables are on PATH
-          echo \"export PATH=$HOME/.local/bin:$PATH\" >> /home/user/.bashrc &&
-          # 3) drop privileges and stay alive
-          su - user -c 'exec tail -f /dev/null'
-        "
+          echo "export PATH=/home/user/.local/bin:$PATH" >> /home/user/.bashrc
+          echo "user" | sudo -S groupmod -o -g ${GID} user
+          echo "user" | sudo -S usermod  -o -u ${UID} -g ${GID} user && echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user
+          tail -f /dev/null
+        '
+  
   
       deploy:
         resources:
