@@ -124,7 +124,7 @@ def run_pretraining(cfg: DictConfig) -> Dict[str, Union[int, float]]:
         total_optimization_steps=total_optimization_steps,
         tokenizer=data_module.tokenizer,
     )
-    log_if_rank_zero(logger, f"FLOPs per batch: {lightning_module.flops_per_batch}")
+    log_if_rank_zero(logger, f"FLOPs per batch: {lightning_module.flops_per_batch_in_millions} (M)")
 
     # Initialize checkpoint callback
     checkpoint_callback = ModelCheckpoint(
