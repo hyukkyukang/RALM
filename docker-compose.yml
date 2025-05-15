@@ -27,7 +27,7 @@ services:
           set -e
           echo "export PATH=/home/user/.local/bin:$PATH" >> /home/user/.bashrc
           echo "user" | sudo -S groupmod -o -g ${GID} user
-          echo "user" | sudo -S usermod  -o -u ${UID} -g ${GID} user && echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user
+          echo "user" | sudo -S usermod  -o -u ${UID} -g ${GID} user
           tail -f /dev/null
         '
   
