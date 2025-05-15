@@ -1,7 +1,7 @@
 # --------------------------------------------
 # Stage 1: CUDA-independent base with Python, tools
 # --------------------------------------------
-FROM ubuntu:22.04 as base-env
+FROM ubuntu:24.04 as base-env
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Seoul
@@ -37,7 +37,7 @@ RUN update-alternatives --install /usr/bin/python python /usr/local/bin/python3.
 # --------------------------------------------
 # Stage 2: Final image with CUDA + FAISS
 # --------------------------------------------
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
 
 # Copy base environment
 COPY --from=base-env / /
@@ -49,8 +49,8 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PYTHONPATH=./
 
 # Add CMake from custom image
-COPY --from=hyukkyukang/cmake:3.30.8-ubuntu22.04 /usr/local/bin/cmake /usr/local/bin/cmake
-COPY --from=hyukkyukang/cmake:3.30.8-ubuntu22.04 /usr/local/share/cmake-3.30 /usr/local/share/cmake-3.30
+COPY --from=hyukkyukang/cmake:3.30.8-ubuntu24.04 /usr/local/bin/cmake /usr/local/bin/cmake
+COPY --from=hyukkyukang/cmake:3.30.8-ubuntu24.04 /usr/local/share/cmake-3.30 /usr/local/share/cmake-3.30
 
 RUN cmake --version
 

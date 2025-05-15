@@ -1,70 +1,60 @@
-# Multi-Stage Build: cmake
-FROM hyukkyukang/cmake:3.30.8-ubuntu24.04 AS cmake-stage
+# --------------------------------------------
+# Stage 1: CUDA-independent base with Python, tools
+# --------------------------------------------
+FROM ubuntu:22.04 as base-env
 
-# Multi-Stage Build: Main
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
-
-# Set timezone
+ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Seoul
-RUN apt-get update && \
-    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata && \
-    dpkg-reconfigure -f noninteractive tzdata
 
-# Install core utilities
 RUN apt-get update && apt-get install -y \
-    gnupg git curl wget zip vim sudo tmux && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install build tools
-RUN apt-get update && apt-get install -y \
-    make ninja-build g++ build-essential checkinstall && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install dependencies for building Python 3.13
-RUN apt-get update && apt-get install -y \
+    tzdata gnupg git curl wget zip vim sudo tmux \
+    make ninja-build g++ build-essential checkinstall \
     libssl-dev libsqlite3-dev libncursesw5-dev tk-dev \
     libgdbm-dev libc6-dev libbz2-dev libreadline-dev libffi-dev \
-    liblzma-dev libgdm-dev zlib1g-dev && \
+    liblzma-dev libgdm-dev zlib1g-dev \
+    swig libblas-dev liblapack-dev libatlas-base-dev libgflags-dev \
+    language-pack-en && \
+    ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Build Python 3.13 from source
+# Build Python 3.13
 WORKDIR /usr/src
-RUN curl -O https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz && \
-    tar -xvf Python-3.13.2.tgz && \
-    cd Python-3.13.2 && \
+RUN curl -O https://www.python.org/ftp/python/3.13.3/Python-3.13.3.tgz && \
+    tar -xvf Python-3.13.3.tgz && \
+    cd Python-3.13.3 && \
     ./configure --enable-optimizations && \
     make -j$(nproc) && make altinstall && \
-    cd .. && rm -rf Python-3.13.2 Python-3.13.2.tgz
+    cd .. && rm -rf Python-3.13.3 Python-3.13.3.tgz
 
-# Set default Python version
+# Set Python alternatives
 RUN update-alternatives --install /usr/bin/python python /usr/local/bin/python3.13 1 && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.13 1
+    update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.13 1 && \
+    python3.13 -m ensurepip && \
+    python3.13 -m pip install --upgrade pip setuptools numpy && \
+    python3.13 -m pip cache purge
 
-# Upgrade pip and setuptools
-RUN python3.13 -m ensurepip && \
-    python3.13 -m pip install --upgrade pip setuptools
+# --------------------------------------------
+# Stage 2: Final image with CUDA + FAISS
+# --------------------------------------------
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
-# Install scientific computing dependencies
-RUN apt-get update && apt-get install -y \
-    swig libblas-dev liblapack-dev libatlas-base-dev libgflags-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Copy base environment
+COPY --from=base-env / /
 
-# Install system locale
-RUN apt-get update && apt-get install -y language-pack-en && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Set environment variables
+ENV PATH="${PATH}:/usr/local/cuda/bin"
+ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/cuda/lib64"
+ENV CUDA_HOME=/usr/local/cuda
+ENV PYTHONPATH=./
 
-# Install NumPy
-RUN pip install numpy
+# Add CMake from custom image
+COPY --from=hyukkyukang/cmake:3.30.8-ubuntu22.04 /usr/local/bin/cmake /usr/local/bin/cmake
+COPY --from=hyukkyukang/cmake:3.30.8-ubuntu22.04 /usr/local/share/cmake-3.30 /usr/local/share/cmake-3.30
 
-# Copy installed the CMake binary
-COPY --from=cmake-stage /usr/local/bin/cmake /usr/local/bin/cmake
-COPY --from=cmake-stage /usr/local/share/cmake-3.30 /usr/local/share/cmake-3.30
-
-# Verify that CMake is correctly installed
 RUN cmake --version
 
-# Install faiss-gpu
+# Build and install FAISS
 RUN git clone https://github.com/facebookresearch/faiss.git && \
     cd faiss && \
     cmake -B build . && make -C build -j faiss && \
@@ -72,11 +62,11 @@ RUN git clone https://github.com/facebookresearch/faiss.git && \
     cd build/faiss/python && python setup.py install && \
     cd ../../.. && rm -rf faiss
 
-# Export environment variables
-ENV PATH="${PATH}:/usr/local/cuda/bin"
-ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/cuda/lib64"
-ENV CUDA_HOME=/usr/local/cuda
-ENV PYTHONPATH=./
+# Create a non-root user
+RUN useradd -ms /bin/bash user && \
+    echo "user:user" | chpasswd && \
+    usermod -aG sudo user
 
-# Fix permissions
-RUN chmod 777 /root && echo "root:root" | chpasswd
+# Set working directory and user
+USER user
+WORKDIR /home/user

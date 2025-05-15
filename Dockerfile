@@ -31,7 +31,8 @@ RUN curl -O https://www.python.org/ftp/python/3.13.3/Python-3.13.3.tgz && \
 RUN update-alternatives --install /usr/bin/python python /usr/local/bin/python3.13 1 && \
     update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.13 1 && \
     python3.13 -m ensurepip && \
-    python3.13 -m pip install --upgrade pip setuptools numpy
+    python3.13 -m pip install --upgrade pip setuptools numpy && \
+    python3.13 -m pip cache purge
 
 # --------------------------------------------
 # Stage 2: Final image with CUDA + FAISS
