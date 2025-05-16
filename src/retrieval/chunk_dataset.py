@@ -87,7 +87,16 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
     @property
     def chunk_ids_shard_paths(self) -> List[str]:
         """Shard is the partitioned data after combining the distributed chunk ids."""
-        return self.meta_data["chunk_ids_shard_paths"]
+        dir_path = os.path.join(
+            self.global_cfg.root_dir_path,
+            self.cfg.dir_path,
+            self.cfg.retrieved_chunk_ids_dir,
+            self.dataset_name,
+        )
+        relative_paths: List[str] = self.meta_data["chunk_ids_shard_paths"]
+        return [
+            os.path.join(dir_path, relative_path) for relative_path in relative_paths
+        ]
 
     @property
     def meta_data(self) -> Dict[str, Any]:
@@ -179,7 +188,7 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
         )
 
         # Initialize containers for metadata
-        shard_paths: List[str] = []
+        relative_shard_paths: List[str] = []
         num_items_per_shard: List[int] = []
 
         logger.info(
@@ -200,17 +209,18 @@ class RetrievedChunkDataset(torch.utils.data.Dataset):
             dataset: Dataset = Dataset.from_dict(data_dict)
 
             # Save the shard to a file
-            shard_path: str = os.path.join(dir_path, f"chunk_ids_shard_{shard_idx}")
+            folder_name: str = f"chunk_ids_shard_{shard_idx}"
+            shard_path: str = os.path.join(dir_path, folder_name)
             dataset.save_to_disk(shard_path)
 
             # Track metadata
-            shard_paths.append(shard_path)
+            relative_shard_paths.append(folder_name)
             num_items_per_shard.append(len(dataset))
 
         # Save the shard paths and item counts to the meta file
         logger.info(f"Saving meta data to {self.meta_file_path}")
         meta_data: Dict[str, Union[List, Dict]] = {
-            "chunk_ids_shard_paths": shard_paths,
+            "chunk_ids_shard_paths": relative_shard_paths,
             "num_items_per_shard": {
                 str(idx): num_items for idx, num_items in enumerate(num_items_per_shard)
             },

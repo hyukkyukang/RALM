@@ -70,7 +70,9 @@ class LightningModule(L.LightningModule):
         self.test_step_outputs = TensorDict({})
         self.register_buffer("cumulative_tokens", torch.tensor(0, dtype=torch.int64))
         # Register buffer for tracking total FLOPs processed
-        self.register_buffer("total_flops", torch.tensor(0, dtype=torch.int64))
+        self.register_buffer(
+            "total_flops_in_millions", torch.tensor(0, dtype=torch.int64)
+        )
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -205,7 +207,7 @@ class LightningModule(L.LightningModule):
             # Hack to change the device of the cumulative tokens to the device of the batch
             self.cumulative_tokens = self.cumulative_tokens.to(self.device)
             # Hack to change the device of the total flops processed to the device of the batch
-            self.total_flops = self.total_flops.to(self.device)
+            self.total_flops_in_millions = self.total_flops_in_millions.to(self.device)
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int

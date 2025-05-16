@@ -7,7 +7,7 @@ from datasets import DatasetDict, Dataset
 from huggingface_hub import HfApi
 
 DATASET_REPO = "Hyukkyu/superglue2"
-SUPERGLUE_DATA_DIR = os.path.join("/root/RETRO", "superglue_data")
+SUPERGLUE_DATA_DIR = os.path.join("/home/user/RALM", "superglue_data")
 
 DATASET_NAME_MAPPING = {
     "BoolQ": "boolq",

@@ -26,7 +26,7 @@ logger = logging.getLogger("FixRetrievalResult")
 
 
 def shard_ids_to_global_chunk_ids(shard_ids: List[Tuple[int, int]]) -> List[int]:
-    meta_path = "/root/RETRO/data/retrieval/chunk_ids/pints_ai/meta.json"
+    meta_path = "/home/user/RALM/data/retrieval/chunk_ids/pints_ai/meta.json"
     with open(meta_path, "r") as f:
         meta = json.load(f)
     num_items_per_shard: int = meta["num_items_per_shard"]["0"]
@@ -93,7 +93,7 @@ def modify_shard_process(shard_idx, modifications_by_shard, retrieved_chunk_data
     return None
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Initialize lightning module and call prepare_data to figure out the length of the dataset
     copy_cfg = copy.deepcopy(cfg)

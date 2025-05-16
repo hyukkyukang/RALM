@@ -47,6 +47,6 @@ def main(config_dir_path: str, data_dir_path: str) -> None:
 
 
 if __name__ == "__main__":
-    config_dir_path = "/root/RETRO/config/"
-    data_dir_path = "/root/RETRO/data/texts/data/"
+    config_dir_path = "/home/user/RALM/config/"
+    data_dir_path = "/home/user/RALM/data/texts/data/"
     main(config_dir_path, data_dir_path)

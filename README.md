@@ -4,7 +4,7 @@
 ## Install dependencies
 Install torch and legacy-cgi (for Python3.13)
 ```bash
-pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu126
+pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128
 pip install legacy-cgi
 ```
 
@@ -49,7 +49,7 @@ python scripts/retrieval/combine_retrieved_chunks.py \
 ## Training
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/pretrain.py \
-    _global.tag=lion_1e-4 \
+    tag=lion_1e-4 \
     optimizer=lion \
     lr_scheduler=linear_decay \
     lr_scheduler.max_learning_rate=1e-4 \
@@ -63,7 +63,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/pretrain.py \
 python scripts/evaluate.py \
     testing.task_names="[last_word_prediction, next_token_prediction]" \
     model=llama \
-    +ckpt_path=/root/RETRO/runs/retro/lion.ckpt \
+    +ckpt_path=/home/user/RALM/runs/retro/lion.ckpt \
     testing.per_device_batch_size=1 \
     testing.num_workers=1
 ```

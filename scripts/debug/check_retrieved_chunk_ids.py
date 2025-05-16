@@ -59,9 +59,9 @@ def check_all_items_parallel(path: str) -> None:
     logger.info(f"Bad shard count: {bad_cnt}")
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    path = "/root/RETRO/data/retrieval/chunk_ids/pints_ai/meta.json"
+    path = "/home/user/RALM/data/retrieval/chunk_ids/pints_ai/meta.json"
     check_all_items_parallel(path)
     logger.info("Done!")
 

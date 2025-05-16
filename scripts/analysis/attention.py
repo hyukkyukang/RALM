@@ -496,7 +496,7 @@ def compare_causal_retrieval_block_attention(
     return None
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Configs
     # Model architecture parameters

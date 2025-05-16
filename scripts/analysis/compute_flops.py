@@ -23,7 +23,7 @@ from src.model.utils import calculate_FLOPs
 logger = logging.getLogger("FLOPsCounter")
 
 
-@hydra.main(version_base=None, config_path="/root/RETRO/config", config_name="config")
+@hydra.main(version_base=None, config_path="/home/user/RALM/config", config_name="config")
 def main(cfg: DictConfig) -> None:
     # Initialize lightning module and call prepare_data to figure out the length of the dataset
     data_module = DataModule(cfg=cfg)
