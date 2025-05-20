@@ -67,6 +67,10 @@ RUN useradd -ms /bin/bash user && \
     echo "user:user" | chpasswd && \
     usermod -aG sudo user
 
+    # Not sure why, but these lines are necesary to use "user" as sudoer
+RUN chown -R user:user /home/user
+RUN chmod 4755 /usr/bin/sudo
+
 # Set working directory and user
 USER user
 WORKDIR /home/user
