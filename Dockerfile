@@ -69,6 +69,9 @@ RUN useradd -ms /bin/bash user && \
 
 # Not sure why, but these lines are necesary to use "user" as sudoer
 RUN chown -R user:user /home/user
+
+# We need this for using sudo on docker container
+RUN chown root:root /usr/bin/sudo
 RUN chmod 4755 /usr/bin/sudo
 
 # Set working directory and user

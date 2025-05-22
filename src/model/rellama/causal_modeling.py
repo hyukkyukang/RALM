@@ -3,7 +3,6 @@ from typing import *
 import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers.modeling_utils import GenerationMixin
 from transformers.models.llama.modeling_llama import (
     KwargsForCausalLM,
     LlamaPreTrainedModel,
@@ -25,7 +24,7 @@ class ReLlamaCausalLMOutputWithPast(CausalLMOutputWithPast):
         self.retrieval_key_values = retrieval_key_values
 
 
-class ReLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
+class ReLlamaForCausalLM(LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
 

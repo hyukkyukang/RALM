@@ -1,8 +1,8 @@
 services:
     RALM:
-      image: hyukkyukang/ralm:pip-py3.13-cuda-12.8.1-cudnn-devel-ubuntu24.04
+      image: hyukkyukang/ralm:pip-py3.12-cuda-12.1.1-cudnn8-devel-ubuntu22.04
       container_name: RALM
-  
+
       shm_size: 24gb
       ulimits:
         memlock: -1
@@ -10,25 +10,29 @@ services:
       tty: true
       user: user
       network_mode: "host"
-  
+
       environment:
         - TZ=Asia/Seoul
         - UID=${UID}
         - GID=${GID}
-  
+
       volumes:
         - /etc/timezone:/etc/timezone:ro
         - ./:/home/user/RALM
         - /mnt:/mnt
       working_dir: /home/user/RALM
-  
+
       command: |
         bash -c '
           set -e
           echo "export PATH=/home/user/.local/bin:$PATH" >> /home/user/.bashrc
           # Not sure why, but below two lines are necessary to correctly change
           # the owner of /home/user/ and folders in there
-          chmod 777 /home/user/ && chmod 777 /home/user/.*
+          echo "user" | sudo -S chmod 777 /home/user/
+          echo "user" | sudo -S chmod 777 /home/user/.*
+          echo "user" | sudo -S chmod 777 /home/user/.cache
+          echo "user" | sudo -S chmod 777 /home/user/.local
+          echo "user" | sudo -S chmod 777 /tmp/
           echo "user" | sudo -S groupmod -g ${GID} user
           echo "user" | sudo -S usermod -u ${UID} -g ${GID} user
           tail -f /dev/null
