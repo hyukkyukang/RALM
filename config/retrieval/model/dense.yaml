@@ -1,0 +1,34 @@
+name: dense
+
+# For encoding
+encoding:
+  model_name: joe32140/ModernBERT-large-msmarco
+  batch_size: 10
+  num_total_workers: 2
+  worker_start_idx_of_current_server: 0
+  num_workers_in_current_server: 2
+  num_dataloader_workers: 8
+
+# For indexing
+indexing:
+  index_dir: "indexes"
+  index_file_name: "faiss_ivfpq.index"
+  num_subquantizers: 32
+  bits_per_subvector: 8
+  train_size: 10_000_000
+  batch_size: 5_000
+  dim: 1024
+
+# For retrieving
+retrieving:
+  num_total_workers: 2
+  worker_start_idx_of_current_server: 0
+  num_workers_in_current_server: 2
+  num_dataloader_workers: 0
+  batch_size: 100
+
+# For saving the encoded vector embeddings
+embedding_dir: "embeddings/"
+retrieved_chunk_ids_dir: "chunk_ids/"
+shard_size: 1_000_000
+meta_file_name: "meta.json"

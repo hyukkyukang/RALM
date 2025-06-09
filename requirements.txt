@@ -18,3 +18,5 @@ wandb
 zstandard # This is for the pile dataset from huggingface
 calflops
 hkkang_utils
+bm25s[full]
+jax[cuda12]

@@ -1,4 +1,4 @@
-from .single_vector_retrieval import (
+from .dense.single_vector_retrieval import (
     SentenceTransformerRetriever,
     SentenceTransformerCorpusRetriever,
     SentenceTransformerCorpusEncoder,
