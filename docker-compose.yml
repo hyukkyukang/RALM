@@ -1,6 +1,6 @@
 services:
     RALM:
-      image: hyukkyukang/ralm:pip-py3.12-cuda-12.1.1-cudnn8-devel-ubuntu22.04
+      image: hyukkyukang/ralm:pip-py3.13-cuda-12.8.1-cudnn-devel-ubuntu24.04
       container_name: RALM
 
       shm_size: 24gb
