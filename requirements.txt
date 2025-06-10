@@ -1,5 +1,5 @@
 torch
-transformers
+transformers==4.51.3 # There is a bug in the latest version of transformers with the calflops library
 sentencepiece
 h5py
 nltk
@@ -18,3 +18,4 @@ wandb
 zstandard # This is for the pile dataset from huggingface
 calflops
 hkkang_utils
+triton
