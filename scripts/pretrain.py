@@ -9,9 +9,9 @@ import torch
 
 def silent_warn_once(*args, **kwargs):
     pass
-
-
 torch._dynamo.utils.warn_once = silent_warn_once
+import hkkang_utils.misc as misc_utils
+misc_utils.load_dotenv()
 import glob
 import json
 import logging
@@ -20,7 +20,6 @@ from datetime import timedelta
 from typing import *
 
 import git
-import hkkang_utils.misc as misc_utils
 import hkkang_utils.slack as slack_utils
 import hydra
 import lightning as L
@@ -284,5 +283,4 @@ if __name__ == "__main__":
         datefmt="%m/%d %H:%M:%S",
         level=logging.INFO,
     )
-    misc_utils.load_dotenv()
     main()

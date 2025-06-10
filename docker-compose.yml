@@ -4,6 +4,7 @@ services:
       container_name: RALM
 
       shm_size: 24gb
+      mem_limit: 56gb
       ulimits:
         memlock: -1
       stdin_open: true
@@ -19,7 +20,7 @@ services:
       volumes:
         - /etc/timezone:/etc/timezone:ro
         - ./:/home/user/RALM
-        - /mnt:/mnt
+        - /DATA_2tb:/mnt
       working_dir: /home/user/RALM
 
       command: |

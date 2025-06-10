@@ -64,26 +64,21 @@ class PintsAIDataset(BaseDataset):
 
     def run_post_processing(self) -> None:
         """
-        Processes the tokenized data by:
-          - Appending an EOS token to each example.
-          - Concatenating tokens across examples.
-          - Splitting the long stream of tokens into fixed-size chunks.
+        Processes the tokenized data in memory-efficient shards:
+          - Appends an EOS token to each example.
+          - Concatenates tokens across examples.
+          - Splits the long stream of tokens into fixed-size chunks.
+          - Flushes segments to disk in configurable batches to bound RAM usage.
 
-        To keep memory usage low and allow resuming after interruption,
-        complete segments are flushed to disk along with a checkpoint file.
-
-        After processing, all temporary datasets are loaded, concatenated,
-        and the final dataset is saved to a temporary final directory.
-        Only after a successful save are the temporary shards and checkpoint
-        removed and the final directory renamed to self.post_process_cache_path.
+        The final dataset is written using on-disk Arrow files without loading all data into RAM.
         """
-        dataset = self.tokenized_data
+        from datasets import load_dataset
 
-        # Create the cache directory if it doesn't exist.
+        dataset = self.tokenized_data
         os.makedirs(self.post_process_cache_path, exist_ok=True)
         checkpoint_path = os.path.join(self.post_process_cache_path, "checkpoint.json")
 
-        # Initialize or load checkpoint state.
+        # Load or initialize checkpoint
         if os.path.exists(checkpoint_path):
             with open(checkpoint_path, "r") as f:
                 checkpoint = json.load(f)
@@ -101,12 +96,11 @@ class PintsAIDataset(BaseDataset):
             all_new_token_ids: List[List[int]] = []
             tmp_token_ids: List[int] = []
 
-        # Flush threshold (number of complete segments before flushing to disk).
-        dataset_flush_threshold: int = 1_000_000
+        # Configurable flush threshold to limit memory (number of segments)
+        flush_threshold: int = 1_000_000
         max_length: int = self.global_cfg.model.max_length
         eos_token_id: int = self.tokenizer.eos_token_id
 
-        # Helper to update the checkpoint.
         def update_checkpoint(current_idx: int):
             checkpoint_data = {
                 "processed_idx": current_idx,
@@ -117,97 +111,89 @@ class PintsAIDataset(BaseDataset):
             with open(checkpoint_path, "w") as f:
                 json.dump(checkpoint_data, f)
 
-        # Process examples; skip those already processed.
+        # Process examples and flush in batches
         for idx in tqdm.tqdm(
             range(processed_idx, len(dataset)),
             desc="Segmenting data",
             disable=not is_main_process(),
         ):
             example = dataset[idx]
+            tmp_token_ids.extend(example["input_ids"] + [eos_token_id])
 
-            # Append EOS token
-            token_ids = example["input_ids"] + [eos_token_id]
-
-            # Add tokens to the temporary lists.
-            tmp_token_ids.extend(token_ids)
-
-            # Slice complete segments from the temporary token lists.
+            # Emit fixed-size segments
             while len(tmp_token_ids) >= max_length:
                 all_new_token_ids.append(tmp_token_ids[:max_length])
                 tmp_token_ids = tmp_token_ids[max_length:]
 
-            # Flush complete segments to disk when threshold is reached.
-            if len(all_new_token_ids) >= dataset_flush_threshold:
-                tmp_path = os.path.join(
-                    self.post_process_cache_path, f"tmp_{flush_counter}"
-                )
-                flush_counter += 1
-                temp_dataset = Dataset.from_dict(
-                    {
-                        "input_ids": all_new_token_ids,
-                    }
-                )
-                log_if_rank_zero(logger, f"Saving temporary dataset to {tmp_path}")
-                temp_dataset.save_to_disk(tmp_path)
-                # Reset the complete segments lists.
-                all_new_token_ids = []
-                del temp_dataset
-                gc.collect()
-                update_checkpoint(idx + 1)
+                # Flush when we hit the threshold
+                if len(all_new_token_ids) >= flush_threshold:
+                    shard_dir = os.path.join(
+                        self.post_process_cache_path, f"tmp_{flush_counter}"
+                    )
+                    temp_ds = Dataset.from_dict({"input_ids": all_new_token_ids})
+                    log_if_rank_zero(
+                        logger,
+                        f"Flushing {len(all_new_token_ids)} segments to {shard_dir}",
+                    )
+                    temp_ds.save_to_disk(shard_dir)
+                    # reset buffer
+                    all_new_token_ids.clear()
+                    del temp_ds
+                    gc.collect()
+                    flush_counter += 1
+                    update_checkpoint(idx + 1)
 
-        # Final flush of any remaining complete segments.
+        # Flush any remaining segments
         if all_new_token_ids:
-            tmp_path = os.path.join(
+            shard_dir = os.path.join(
                 self.post_process_cache_path, f"tmp_{flush_counter}"
             )
-            flush_counter += 1
-            temp_dataset = Dataset.from_dict(
-                {
-                    "input_ids": all_new_token_ids,
-                }
+            temp_ds = Dataset.from_dict({"input_ids": all_new_token_ids})
+            log_if_rank_zero(
+                logger,
+                f"Final flush of {len(all_new_token_ids)} segments to {shard_dir}",
             )
-            log_if_rank_zero(logger, f"Saving final temporary dataset to {tmp_path}")
-            temp_dataset.save_to_disk(tmp_path)
-            all_new_token_ids = []
-            del temp_dataset
+            temp_ds.save_to_disk(shard_dir)
+            all_new_token_ids.clear()
+            del temp_ds
             gc.collect()
             update_checkpoint(idx + 1)
+            flush_counter += 1
 
-        # Note: Any tokens left in tmp_token_ids (an incomplete segment) are dropped.
-
-        # Load all flushed temporary datasets.
-        temp_files = []
+        # Build list of shard arrow files for final load
+        shard_files: List[str] = []
         for i in range(flush_counter):
-            tmp_path = os.path.join(self.post_process_cache_path, f"tmp_{i}")
-            assert os.path.exists(tmp_path), f"Temporary file {tmp_path} does not exist"
-            temp_files.append(tmp_path)
-        temp_datasets = [Dataset.load_from_disk(path) for path in temp_files]
-        if len(temp_datasets) == 1:
-            final_dataset = temp_datasets[0]
-        else:
-            final_dataset = concatenate_datasets(temp_datasets)
+            shard_dir = os.path.join(self.post_process_cache_path, f"tmp_{i}")
+            # find arrow files inside the shard directory
+            arrow_paths = [
+                os.path.join(shard_dir, fn)
+                for fn in os.listdir(shard_dir)
+                if fn.endswith(".arrow")
+            ]
+            shard_files.extend(arrow_paths)
 
-        # First, save the final dataset to a temporary final directory.
+        # Load all shards as an on-disk Arrow dataset without spiking RAM
+        final_dataset = load_dataset(
+            "arrow", data_files=shard_files, split="train", keep_in_memory=False
+        )
+
+        # Overwrite cache directory with the final dataset structure
         log_if_rank_zero(
             logger,
-            f"Saving final dataset to temporary path {self.post_process_cache_path}",
+            f"Saving final merged dataset to {self.post_process_cache_path}",
         )
         final_dataset.save_to_disk(self.post_process_cache_path)
-        log_if_rank_zero(
-            logger,
-            f"Final dataset successfully saved to {self.post_process_cache_path}",
-        )
 
-        # Now cleanup: remove the checkpoint file and temporary shards.
+        # Cleanup temporary shards and checkpoint
         if os.path.exists(checkpoint_path):
-            log_if_rank_zero(logger, f"Removing checkpoint file {checkpoint_path}")
             os.remove(checkpoint_path)
-        for tmp_path in temp_files:
-            if os.path.exists(tmp_path):
-                log_if_rank_zero(logger, f"Removing temporary file {tmp_path}")
-                shutil.rmtree(tmp_path)
-        log_if_rank_zero(logger, f"Cleanup Finished")
+        for i in range(flush_counter):
+            shard_dir = os.path.join(self.post_process_cache_path, f"tmp_{i}")
+            if os.path.isdir(shard_dir):
+                shutil.rmtree(shard_dir)
+        log_if_rank_zero(logger, "Post-processing completed and cleaned up.")
 
+        # Assign for downstream use
         self.post_processed_data = final_dataset
 
 
