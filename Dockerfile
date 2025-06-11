@@ -20,12 +20,12 @@ RUN apt-get update && apt-get install -y \
 
 # Build Python 3.13
 WORKDIR /usr/src
-RUN curl -O https://www.python.org/ftp/python/3.13.3/Python-3.13.3.tgz && \
-    tar -xvf Python-3.13.3.tgz && \
-    cd Python-3.13.3 && \
+RUN curl -O https://www.python.org/ftp/python/3.13.4/Python-3.13.4.tgz && \
+    tar -xvf Python-3.13.4.tgz && \
+    cd Python-3.13.4 && \
     ./configure --enable-optimizations && \
     make -j$(nproc) && make altinstall && \
-    cd .. && rm -rf Python-3.13.3 Python-3.13.3.tgz
+    cd .. && rm -rf Python-3.13.4 Python-3.13.4.tgz
 
 # Set Python alternatives
 RUN update-alternatives --install /usr/bin/python python /usr/local/bin/python3.13 1 && \
